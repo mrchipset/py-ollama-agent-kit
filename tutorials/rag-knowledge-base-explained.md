@@ -11,6 +11,15 @@
 
 所以，真正“嵌入进去”的不是整个知识库，也不是原始向量本身，而是“通过向量检索挑出的文本片段”。
 
+### 可以尝试的提示词
+
+1. How do I disable automatic retrieval?
+2. What is ollama agent kit?
+3. Explain the Markdown RAG workflow.
+4. Summarize the project in one paragraph with citations.
+5. Compare chat mode and --no-rag mode.
+
+
 ## 目录职责
 
 ## `docs/`

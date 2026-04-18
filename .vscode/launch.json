@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Python: Ollama Agent Chat",
+      "name": "Python: Ollama Agent Chat - No Stream",
       "type": "debugpy",
       "request": "launch",
       "module": "ollama_agent_kit",
@@ -13,11 +13,22 @@
       "justMyCode": true
     },
     {
+      "name": "Python: Ollama Agent Chat - Stream",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "ollama_agent_kit",
+      "args": ["chat", "--stream"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
       "name": "Python: Ollama Agent Chat No Rag",
       "type": "debugpy",
       "request": "launch",
       "module": "ollama_agent_kit",
-      "args": ["chat", "--no-rag"],
+      "args": ["chat", "--no-rag", "--stream"],
       "cwd": "${workspaceFolder}",
       "envFile": "${workspaceFolder}/.env",
       "console": "integratedTerminal",

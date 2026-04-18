@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import Optional
 
@@ -82,6 +83,11 @@ def chat(
     prompt: Optional[str] = typer.Argument(None, help="Optional one-shot prompt."),
     model: Optional[str] = typer.Option(None, help="Override the model name for this session."),
     rag: bool = typer.Option(True, "--rag/--no-rag", help="Enable or disable automatic Markdown RAG context injection."),
+    stream: bool = typer.Option(
+        False,
+        "--stream/--no-stream",
+        help="Stream assistant text to the terminal as it is generated.",
+    ),
     debug_log_path: Optional[str] = typer.Option(
         None,
         help="Write user requests and Ollama responses to this JSONL file.",
@@ -98,24 +104,44 @@ def chat(
     )
 
     if prompt:
-        _run_single_turn(agent, prompt)
+        _run_single_turn(agent, prompt, stream=stream)
         return
 
     while True:
         user_input = Prompt.ask("You")
         if user_input.strip().lower() in {"quit", "exit", ":q"}:
             break
-        _run_single_turn(agent, user_input)
+        _run_single_turn(agent, user_input, stream=stream)
 
 
-def _run_single_turn(agent: TeachingAgent, user_input: str) -> None:
+def _run_single_turn(agent: TeachingAgent, user_input: str, *, stream: bool = False) -> None:
+    streamed_reply: list[str] = []
+    rag_hits = agent._search_rag(user_input) if stream and hasattr(agent, "_search_rag") else None
+    printed_rag_hits = False
+
+    if stream and rag_hits:
+        console.print("[cyan]Retrieved references:[/cyan]")
+        for index, hit in enumerate(rag_hits, start=1):
+            console.print(f"[cyan]{index}. {hit.citation}[/cyan] [dim](score {hit.score:.3f})[/dim]")
+            if hit.heading:
+                console.print(f"[dim]{hit.heading}[/dim]")
+            console.print(hit.excerpt)
+        printed_rag_hits = True
+
+    def on_text_chunk(chunk: str) -> None:
+        streamed_reply.append(chunk)
+        console.print(chunk, end="")
+
     try:
-        turn = agent.run_turn(user_input)
+        if stream and _supports_stream_callback(agent):
+            turn = agent.run_turn(user_input, rag_hits=rag_hits, on_text_chunk=on_text_chunk)
+        else:
+            turn = agent.run_turn(user_input)
     except (OllamaAPIError, RuntimeError, KeyError, FileNotFoundError, ValueError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
 
-    if turn.rag_hits:
+    if turn.rag_hits and not printed_rag_hits:
         console.print("[cyan]Retrieved references:[/cyan]")
         for index, hit in enumerate(turn.rag_hits, start=1):
             console.print(f"[cyan]{index}. {hit.citation}[/cyan] [dim](score {hit.score:.3f})[/dim]")
@@ -127,7 +153,19 @@ def _run_single_turn(agent: TeachingAgent, user_input: str) -> None:
         console.print(f"[yellow]tool[/yellow] {event.name}({event.arguments})")
         console.print(event.result)
 
-    console.print(Markdown(turn.reply))
+    if stream:
+        console.print()
+    else:
+        console.print(Markdown(turn.reply))
+
+
+def _supports_stream_callback(agent: object) -> bool:
+    try:
+        signature = inspect.signature(agent.run_turn)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+    return "on_text_chunk" in signature.parameters
 
 
 def main() -> None:

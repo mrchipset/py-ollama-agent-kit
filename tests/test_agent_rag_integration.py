@@ -30,6 +30,11 @@ class _SequencedFakeClient:
         self.calls.append({"model": model, "messages": list(messages), "tools": tools})
         return self.responses.pop(0)
 
+    def stream_chat(self, *, model: str, messages: list[dict], tools: list[dict] | None = None):
+        self.calls.append({"model": model, "messages": list(messages), "tools": tools, "stream": True})
+        for chunk in self.responses.pop(0)["chunks"]:
+            yield chunk
+
 
 @dataclass
 class _FakeRagStore:
@@ -149,3 +154,59 @@ def test_agent_falls_back_when_model_returns_empty_response() -> None:
         for message in client.calls[1]["messages"]
     )
     assert turn.rag_hits[0].citation == "docs/demo-kb/05-troubleshooting.md#L19-L21"
+
+
+def test_agent_streams_retry_reply_when_initial_stream_is_empty() -> None:
+    client = _SequencedFakeClient(
+        responses=[
+            {
+                "chunks": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                        }
+                    }
+                ]
+            },
+            {
+                "chunks": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Use --no-rag for pure chat sessions.",
+                        }
+                    },
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                        }
+                    },
+                ]
+            },
+        ]
+    )
+    rag_store = _FakeRagStore(
+        hits=[
+            RagSearchHit(
+                score=0.654,
+                citation="docs/demo-kb/05-troubleshooting.md#L19-L21",
+                source_path="docs/demo-kb/05-troubleshooting.md",
+                heading="Auto RAG is getting in the way",
+                heading_line=19,
+                line_start=19,
+                line_end=21,
+                excerpt="Use --no-rag for pure chat sessions.",
+                text="# Auto RAG is getting in the way\n\nUse --no-rag for pure chat sessions.",
+            )
+        ]
+    )
+    agent = TeachingAgent(settings=Settings(), client=client, rag_store=rag_store)
+
+    chunks: list[str] = []
+    turn = agent.run_turn("How do I disable automatic retrieval?", on_text_chunk=chunks.append)
+
+    assert turn.reply.startswith("Use --no-rag for pure chat sessions.")
+    assert "Use --no-rag for pure chat sessions." in "".join(chunks)
+    assert len(client.calls) == 2
