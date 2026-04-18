@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -11,8 +12,11 @@ from rich.table import Table
 from .agent import TeachingAgent
 from .config import get_settings
 from .ollama_client import OllamaAPIError, OllamaClient
+from .rag import MarkdownRagStore
 
 app = typer.Typer(add_completion=False, help="Teaching-oriented Ollama agent CLI.")
+rag_app = typer.Typer(add_completion=False, help="Markdown RAG knowledge base commands.")
+app.add_typer(rag_app, name="rag")
 console = Console()
 
 
@@ -21,6 +25,18 @@ def _build_agent(model: str | None = None) -> TeachingAgent:
     if model:
         settings.ollama_model = model
     return TeachingAgent(settings=settings)
+
+
+def _build_rag_store() -> MarkdownRagStore:
+    settings = get_settings()
+    return MarkdownRagStore(
+        workspace_root=Path.cwd(),
+        index_path=Path(settings.rag_index_path),
+        client=OllamaClient(settings.ollama_host),
+        embedding_model=settings.rag_embedding_model,
+        chunk_size=settings.rag_chunk_size,
+        chunk_overlap=settings.rag_chunk_overlap,
+    )
 
 
 @app.command()
@@ -65,8 +81,18 @@ def models() -> None:
 def chat(
     prompt: Optional[str] = typer.Argument(None, help="Optional one-shot prompt."),
     model: Optional[str] = typer.Option(None, help="Override the model name for this session."),
+    rag: bool = typer.Option(True, "--rag/--no-rag", help="Enable or disable automatic Markdown RAG context injection."),
+    debug_log_path: Optional[str] = typer.Option(
+        None,
+        help="Write user requests and Ollama responses to this JSONL file.",
+    ),
 ) -> None:
     agent = _build_agent(model=model)
+    agent.settings.rag_auto_enabled = rag
+    if not rag:
+        agent.rag_store = None
+    if debug_log_path:
+        agent.settings.debug_log_path = debug_log_path
     console.print(
         f"Connected to {agent.settings.ollama_host} with model {agent.settings.ollama_model}."
     )
@@ -89,6 +115,14 @@ def _run_single_turn(agent: TeachingAgent, user_input: str) -> None:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
 
+    if turn.rag_hits:
+        console.print("[cyan]Retrieved references:[/cyan]")
+        for index, hit in enumerate(turn.rag_hits, start=1):
+            console.print(f"[cyan]{index}. {hit.citation}[/cyan] [dim](score {hit.score:.3f})[/dim]")
+            if hit.heading:
+                console.print(f"[dim]{hit.heading}[/dim]")
+            console.print(hit.excerpt)
+
     for event in turn.tool_events:
         console.print(f"[yellow]tool[/yellow] {event.name}({event.arguments})")
         console.print(event.result)
@@ -98,3 +132,58 @@ def _run_single_turn(agent: TeachingAgent, user_input: str) -> None:
 
 def main() -> None:
     app()
+
+
+@rag_app.command("add")
+def rag_add(
+    path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, help="Markdown file to add."),
+) -> None:
+    try:
+        result = _build_rag_store().add_markdown_file(path)
+    except (FileNotFoundError, ValueError, OllamaAPIError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        f"Added {result.chunks_added} chunks from {result.source_path} into {result.total_chunks} total chunks."
+    )
+
+
+@rag_app.command("search")
+def rag_search(
+    query: str = typer.Argument(..., help="Search query."),
+    top_k: int | None = typer.Option(None, min=1, help="Maximum number of results to return."),
+) -> None:
+    store = _build_rag_store()
+    try:
+        results = store.search(query, top_k=top_k or get_settings().rag_top_k)
+    except (ValueError, OllamaAPIError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    if not results:
+        console.print("No matches found.")
+        return
+
+    table = Table(title="RAG search results")
+    table.add_column("Rank", justify="right")
+    table.add_column("Score", justify="right")
+    table.add_column("Citation")
+    table.add_column("Excerpt")
+
+    for index, result in enumerate(results, start=1):
+        table.add_row(
+            str(index),
+            f"{result.score:.3f}",
+            result.citation,
+            result.excerpt,
+        )
+
+    console.print(table)
+
+
+@rag_app.command("clear")
+def rag_clear() -> None:
+    store = _build_rag_store()
+    store.clear()
+    console.print("RAG index cleared.")

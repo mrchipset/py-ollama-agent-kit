@@ -17,6 +17,7 @@ This workspace contains a teaching-oriented Python agent that talks to Ollama, c
 |       |-- cli.py
 |       |-- config.py
 |       |-- ollama_client.py
+|       |-- rag.py
 |       `-- tools.py
 `-- tests/
     `-- test_tools.py
@@ -45,12 +46,39 @@ ollama-agent doctor
 ollama-agent chat
 ```
 
+To write each user prompt and raw Ollama response to a JSONL file for debugging, set `OLLAMA_DEBUG_LOG_PATH` in `.env` or pass `--debug-log-path` to `chat`:
+
+```bash
+ollama-agent chat --debug-log-path logs/ollama-debug.jsonl
+```
+
+You can disable automatic RAG injection when you want a pure chat session:
+
+```bash
+ollama-agent chat --no-rag
+```
+
+## Markdown RAG MVP
+
+This workspace now includes a minimal Markdown RAG flow for teaching and debugging.
+
+```bash
+ollama-agent rag add docs/intro.md
+ollama-agent rag search "what does the project do?"
+ollama-agent rag clear
+```
+
+The first version only supports local Markdown files, explicit file adds, and retrieval output with citations. Model-generated answers will come in a later step.
+
 ## What this sample covers
 
 - Plain HTTP calls to the Ollama chat API
 - Tool schema registration
 - Tool-call execution loop
 - Interactive CLI chat for teaching and debugging
+- Optional JSONL debug logging of requests and responses
+- Markdown retrieval with explicit add/search/clear commands
+- Automatic RAG injection in chat, with a `--no-rag` override
 
 ## Built-in tools
 

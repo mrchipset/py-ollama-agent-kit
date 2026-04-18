@@ -11,7 +11,10 @@ load_dotenv(ROOT_DIR / ".env")
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a teaching assistant for Ollama agent demos. "
-    "Answer clearly, use tools when they help, and explain what you used."
+    "Answer clearly, use tools when they help, and explain what you used. "
+    "Only use the tool names provided in the tool list. "
+    "Never invent tool names or fake tool-call JSON in assistant content. "
+    "If you need a tool, emit a real tool call using tool_calls."
 )
 
 
@@ -20,6 +23,13 @@ class Settings:
     ollama_host: str = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
     ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3.2")
     system_prompt: str = os.getenv("OLLAMA_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
+    debug_log_path: str | None = os.getenv("OLLAMA_DEBUG_LOG_PATH") or None
+    rag_auto_enabled: bool = os.getenv("RAG_AUTO_ENABLED", "true").lower() not in {"0", "false", "no", "off"}
+    rag_index_path: str = os.getenv("RAG_INDEX_PATH", str(ROOT_DIR / "data" / "rag_index.json"))
+    rag_embedding_model: str = os.getenv("RAG_EMBEDDING_MODEL", os.getenv("OLLAMA_EMBEDDING_MODEL", os.getenv("OLLAMA_MODEL", "llama3.2")))
+    rag_chunk_size: int = int(os.getenv("RAG_CHUNK_SIZE", "800"))
+    rag_chunk_overlap: int = int(os.getenv("RAG_CHUNK_OVERLAP", "120"))
+    rag_top_k: int = int(os.getenv("RAG_TOP_K", "5"))
 
 
 def get_settings() -> Settings:

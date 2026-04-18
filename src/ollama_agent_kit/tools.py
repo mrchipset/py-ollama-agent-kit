@@ -40,6 +40,12 @@ class ToolRegistry:
     def __init__(self, tools: list[ToolDefinition]) -> None:
         self._tools = {tool.name: tool for tool in tools}
 
+    def has_tool(self, name: str) -> bool:
+        return name in self._tools
+
+    def tool_names(self) -> list[str]:
+        return sorted(self._tools)
+
     def schemas(self) -> list[dict[str, Any]]:
         return [tool.as_ollama_tool() for tool in self._tools.values()]
 

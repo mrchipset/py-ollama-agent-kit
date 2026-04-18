@@ -39,6 +39,14 @@ class OllamaClient:
             body["tools"] = tools
         return self._request("POST", "/api/chat", json=body)
 
+    def embeddings(self, *, model: str, prompt: str) -> list[float]:
+        payload = self._request("POST", "/api/embeddings", json={"model": model, "prompt": prompt})
+        embedding = payload.get("embedding")
+        if not isinstance(embedding, list):
+            raise OllamaAPIError("Ollama embeddings response missing embedding list.")
+
+        return [float(value) for value in embedding]
+
     def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         try:
             response = self._client.request(method, path, **kwargs)

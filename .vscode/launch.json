@@ -11,6 +11,17 @@
       "envFile": "${workspaceFolder}/.env",
       "console": "integratedTerminal",
       "justMyCode": true
+    },
+    {
+      "name": "Python: Ollama Agent Chat No Rag",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "ollama_agent_kit",
+      "args": ["chat", "--no-rag"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": true
     }
   ]
 }
