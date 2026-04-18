@@ -48,7 +48,7 @@ class TeachingAgent:
         turn_messages.append({"role": "user", "content": user_input})
         self.messages.append({"role": "user", "content": user_input})
 
-        if rag_hits is None:
+        if rag_hits is None and self.should_use_rag(user_input):
             rag_hits = self._search_rag(user_input)
         rag_context = self._build_rag_context(rag_hits)
         if rag_context is not None:
@@ -299,6 +299,27 @@ class TeachingAgent:
 
     def _client_supports_embeddings(self) -> bool:
         return self.client is not None and hasattr(self.client, "embeddings")
+
+    def should_use_rag(self, user_input: str) -> bool:
+        text = user_input.casefold()
+        tool_signals = (
+            "time",
+            "date",
+            "today",
+            "now",
+            "timestamp",
+            "calculate",
+            "compute",
+            "sum",
+            "list files",
+            "list workspace",
+            "read file",
+            "open file",
+            "show file",
+            "workspace",
+            "directory",
+        )
+        return not any(signal in text for signal in tool_signals)
 
     def _search_rag(self, user_input: str) -> list[RagSearchHit]:
         if self.rag_store is None or not self.settings.rag_auto_enabled:

@@ -116,7 +116,8 @@ def chat(
 
 def _run_single_turn(agent: TeachingAgent, user_input: str, *, stream: bool = False) -> None:
     streamed_reply: list[str] = []
-    rag_hits = agent._search_rag(user_input) if stream and hasattr(agent, "_search_rag") else None
+    use_rag = stream and hasattr(agent, "should_use_rag") and agent.should_use_rag(user_input)
+    rag_hits = agent._search_rag(user_input) if use_rag and hasattr(agent, "_search_rag") else None
     printed_rag_hits = False
 
     if stream and rag_hits:

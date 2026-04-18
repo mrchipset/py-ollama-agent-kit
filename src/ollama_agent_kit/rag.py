@@ -46,7 +46,9 @@ def format_rag_context(hits: list[RagSearchHit]) -> str:
         lines.append("")
 
     lines.append(
-        "Use only the retrieved context when it is relevant, and cite the source paths in your answer."
+        "Use the retrieved context as supplemental background when it is relevant. "
+        "Tool calling remains available; use a tool when it is the better fit, especially for live or computed facts. "
+        "Cite the source paths in your answer when you rely on the retrieved context."
     )
     return "\n".join(lines).strip()
 

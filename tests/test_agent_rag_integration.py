@@ -46,6 +46,124 @@ class _FakeRagStore:
         return self.hits[:top_k]
 
 
+@dataclass
+class _ToolCallClient:
+    responses: list[dict]
+    calls: list[dict] = field(default_factory=list)
+
+    def chat(self, *, model: str, messages: list[dict], tools: list[dict] | None = None) -> dict:
+        self.calls.append({"model": model, "messages": list(messages), "tools": tools})
+        return self.responses.pop(0)
+
+
+def test_agent_can_still_call_tools_when_rag_is_enabled() -> None:
+    client = _ToolCallClient(
+        responses=[
+            {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "get_current_time",
+                                "arguments": {},
+                            }
+                        }
+                    ],
+                }
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "The current time is available through the tool output.",
+                }
+            },
+        ]
+    )
+    rag_store = _FakeRagStore(
+        hits=[
+            RagSearchHit(
+                score=0.811,
+                citation="docs/demo-kb/03-rag.md#L1-L4",
+                source_path="docs/demo-kb/03-rag.md",
+                heading="Markdown RAG Workflow",
+                heading_line=1,
+                line_start=1,
+                line_end=4,
+                excerpt="The demo knowledge base supports a lightweight Markdown RAG flow.",
+                text="# Markdown RAG Workflow\n\nThe demo knowledge base supports a lightweight Markdown RAG flow.",
+            )
+        ]
+    )
+    agent = TeachingAgent(settings=Settings(), client=client, rag_store=rag_store)
+
+    turn = agent.run_turn("What time is it?")
+
+    assert turn.reply == "The current time is available through the tool output."
+    assert len(turn.tool_events) == 1
+    assert turn.tool_events[0].name == "get_current_time"
+    assert len(client.calls) == 2
+    assert client.calls[0]["tools"] is not None
+    assert rag_store.queries == []
+    assert all(
+        "Retrieved Markdown context" not in message.get("content", "")
+        for message in client.calls[0]["messages"]
+    )
+    assert any(message["role"] == "tool" and message["name"] == "get_current_time" for message in client.calls[1]["messages"])
+
+
+def test_agent_skips_rag_for_tool_focused_questions() -> None:
+    client = _ToolCallClient(
+        responses=[
+            {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "get_current_time",
+                                "arguments": {},
+                            }
+                        }
+                    ],
+                }
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "The current time is available through the tool output.",
+                }
+            },
+        ]
+    )
+    rag_store = _FakeRagStore(
+        hits=[
+            RagSearchHit(
+                score=0.999,
+                citation="docs/demo-kb/01-overview.md#L1-L4",
+                source_path="docs/demo-kb/01-overview.md",
+                heading="Overview",
+                heading_line=1,
+                line_start=1,
+                line_end=4,
+                excerpt="This is the overview of the project.",
+                text="# Overview\n\nThis is the overview of the project.",
+            )
+        ]
+    )
+    agent = TeachingAgent(settings=Settings(), client=client, rag_store=rag_store)
+
+    turn = agent.run_turn("What time is it?")
+
+    assert turn.reply == "The current time is available through the tool output."
+    assert rag_store.queries == []
+    assert len(client.calls) == 2
+    assert all(
+        "Retrieved Markdown context" not in message.get("content", "")
+        for message in client.calls[0]["messages"]
+    )
+
+
 def test_agent_injects_retrieved_context_into_request() -> None:
     client = _FakeClient()
     rag_store = _FakeRagStore(

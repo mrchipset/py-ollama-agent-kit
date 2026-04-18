@@ -31,6 +31,9 @@ class _FakeAgent:
 
 @dataclass
 class _FakeStreamingAgent:
+    def should_use_rag(self, user_input: str) -> bool:
+        return True
+
     def _search_rag(self, user_input: str) -> list[RagSearchHit]:
         return [
             RagSearchHit(
