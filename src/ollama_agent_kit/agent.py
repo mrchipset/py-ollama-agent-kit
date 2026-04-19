@@ -22,7 +22,7 @@ class AgentTurn:
 @dataclass(slots=True)
 class TeachingAgent:
     settings: Settings = field(default_factory=get_settings)
-    registry: ToolRegistry = field(default_factory=build_default_registry)
+    registry: ToolRegistry | None = None
     client: OllamaClient | None = None
     rag_store: MarkdownRagStore | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
@@ -32,6 +32,8 @@ class TeachingAgent:
     def __post_init__(self) -> None:
         if self.client is None:
             self.client = OllamaClient(self.settings.ollama_host)
+        if self.registry is None:
+            self.registry = build_default_registry(settings=self.settings)
         if not self.messages:
             self.messages.append({"role": "system", "content": self.settings.system_prompt})
         if self.rag_store is None and self.settings.rag_auto_enabled and self._client_supports_embeddings():

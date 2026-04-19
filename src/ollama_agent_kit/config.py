@@ -30,6 +30,12 @@ class Settings:
     rag_chunk_size: int = int(os.getenv("RAG_CHUNK_SIZE", "800"))
     rag_chunk_overlap: int = int(os.getenv("RAG_CHUNK_OVERLAP", "120"))
     rag_top_k: int = int(os.getenv("RAG_TOP_K", "5"))
+    python_exec_timeout_seconds: float = float(os.getenv("PYTHON_EXEC_TIMEOUT_SECONDS", "5"))
+    python_exec_max_output_chars: int = int(os.getenv("PYTHON_EXEC_MAX_OUTPUT_CHARS", "4000"))
+    python_exec_allowed_imports: str = os.getenv(
+        "PYTHON_EXEC_ALLOWED_IMPORTS",
+        "math,statistics,json,re,datetime,decimal,fractions,itertools,functools,collections,operator,random,string,textwrap,heapq,bisect,typing,dataclasses",
+    )
 
 
 def get_settings() -> Settings:

@@ -7,6 +7,7 @@ Common commands:
 - `ollama-agent doctor` — verify the Ollama host and model
 - `ollama-agent chat` — start an interactive chat session
 - `ollama-agent chat --no-rag` — run chat without automatic retrieval
+- `ollama-agent demo python` — run the guided controlled Python execution demo
 - `ollama-agent rag add <markdown-file>` — add a Markdown file to the knowledge base
 - `ollama-agent rag search <query>` — retrieve matching chunks with citations
 - `ollama-agent rag clear` — reset the local RAG index

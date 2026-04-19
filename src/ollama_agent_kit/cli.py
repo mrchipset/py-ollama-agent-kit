@@ -17,8 +17,12 @@ from .rag import MarkdownRagStore
 
 app = typer.Typer(add_completion=False, help="Teaching-oriented Ollama agent CLI.")
 rag_app = typer.Typer(add_completion=False, help="Markdown RAG knowledge base commands.")
+demo_app = typer.Typer(add_completion=False, help="Guided demo scenarios for teaching the agent.")
 app.add_typer(rag_app, name="rag")
+app.add_typer(demo_app, name="demo")
 console = Console()
+
+DEFAULT_PYTHON_DEMO_PROMPT = "Use Python to add 17 and 25, then show the result."
 
 
 def _build_agent(model: str | None = None) -> TeachingAgent:
@@ -38,6 +42,17 @@ def _build_rag_store() -> MarkdownRagStore:
         chunk_size=settings.rag_chunk_size,
         chunk_overlap=settings.rag_chunk_overlap,
     )
+
+
+def _run_python_demo(
+    agent: TeachingAgent,
+    *,
+    prompt: str = DEFAULT_PYTHON_DEMO_PROMPT,
+    stream: bool = True,
+) -> None:
+    console.print("[cyan]Python demo:[/cyan] controlled tool execution with structured output.")
+    console.print(f"[cyan]Prompt:[/cyan] {prompt}")
+    _run_single_turn(agent, prompt, stream=stream)
 
 
 @app.command()
@@ -131,7 +146,6 @@ def _run_single_turn(agent: TeachingAgent, user_input: str, *, stream: bool = Fa
 
     def on_text_chunk(chunk: str) -> None:
         streamed_reply.append(chunk)
-        console.print(chunk, end="")
 
     try:
         if stream and _supports_stream_callback(agent):
@@ -155,6 +169,8 @@ def _run_single_turn(agent: TeachingAgent, user_input: str, *, stream: bool = Fa
         console.print(event.result)
 
     if stream:
+        if streamed_reply:
+            console.print("".join(streamed_reply), end="")
         console.print()
     else:
         console.print(Markdown(turn.reply))
@@ -171,6 +187,29 @@ def _supports_stream_callback(agent: object) -> bool:
 
 def main() -> None:
     app()
+
+
+@demo_app.command("python")
+def demo_python(
+    prompt: Optional[str] = typer.Option(None, help="Override the default Python demo prompt."),
+    model: Optional[str] = typer.Option(None, help="Override the model name for this demo."),
+    stream: bool = typer.Option(
+        True,
+        "--stream/--no-stream",
+        help="Stream assistant text to the terminal as it is generated.",
+    ),
+    rag: bool = typer.Option(
+        False,
+        "--rag/--no-rag",
+        help="Enable or disable automatic Markdown RAG context injection for the demo.",
+    ),
+) -> None:
+    agent = _build_agent(model=model)
+    agent.settings.rag_auto_enabled = rag
+    if not rag:
+        agent.rag_store = None
+
+    _run_python_demo(agent, prompt=prompt or DEFAULT_PYTHON_DEMO_PROMPT, stream=stream)
 
 
 @rag_app.command("add")

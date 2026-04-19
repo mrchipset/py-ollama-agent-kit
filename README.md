@@ -58,6 +58,12 @@ You can disable automatic RAG injection when you want a pure chat session:
 ollama-agent chat --no-rag
 ```
 
+To run the guided Python tool demo directly:
+
+```bash
+ollama-agent demo python
+```
+
 ## Markdown RAG MVP
 
 This workspace now includes a minimal Markdown RAG flow for teaching and debugging.
@@ -79,12 +85,15 @@ The first version only supports local Markdown files, explicit file adds, and re
 - Optional JSONL debug logging of requests and responses
 - Markdown retrieval with explicit add/search/clear commands
 - Automatic RAG injection in chat, with a `--no-rag` override
+- A controlled Python execution tool with structured stdout, stderr, and result output
 
 ## Built-in tools
 
 - `get_current_time`
 - `add_numbers`
+- `run_python_code`
 - `list_workspace`
 - `read_workspace_file`
 
 The file tools are limited to the current workspace root.
+The Python execution tool is intentionally constrained: it runs in a subprocess, enforces a timeout, limits output, and only allows a small import allowlist for teaching demos.

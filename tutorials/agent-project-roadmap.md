@@ -30,6 +30,7 @@
 ### 已完成
 
 - [x] Markdown RAG 基础接入与知识库解释
+- [x] 受控 Python 执行工具
 - [x] Streaming 输出
 - [x] Streaming 下 RAG references 的顺序修复
 - [x] Streaming 下空回复重试的可见输出修复
@@ -38,7 +39,6 @@
 
 ### 待完成
 
-- [ ] 受控 Python 执行工具
 - [ ] 会话导出功能
 - [ ] 更强的教学场景模板
 - [ ] RAG 索引管理增强
@@ -77,16 +77,17 @@
 
 ### 1. 受控 Python 执行工具
 
-#### 当前缺口
+#### 当前状态
 
-当前内置工具只有：
+这个能力已经实现，当前内置工具现在包含：
 
 - `get_current_time`
 - `add_numbers`
+- `run_python_code`
 - `list_workspace`
 - `read_workspace_file`
 
-这些工具适合展示最基础的 function calling，但不足以支撑真正有内容的 agent 演示。
+这些工具适合展示最基础的 function calling，也已经可以支撑更完整的 agent 演示。
 
 #### 为什么重要
 

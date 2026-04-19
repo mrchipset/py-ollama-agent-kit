@@ -13,6 +13,7 @@ The built-in tools are:
 
 - `get_current_time`
 - `add_numbers`
+- `run_python_code`
 - `list_workspace`
 - `read_workspace_file`
 

@@ -16,6 +16,7 @@ The corpus is intentionally small and structured so you can demonstrate:
 - `04-cli.md` — CLI commands and usage patterns
 - `05-troubleshooting.md` — common issues and fixes
 - `06-sample-questions.md` — example queries for demos
+- `07-python-execution.md` — controlled Python execution demo scenario
 
 ## Suggested demo flow
 
@@ -23,6 +24,7 @@ The corpus is intentionally small and structured so you can demonstrate:
 2. Ask a question about the project.
 3. Show the retrieved citations before the final answer.
 4. Toggle RAG off with `--no-rag` to compare behavior.
+5. Ask a Python execution question to show tool delegation, structured results, and safety boundaries.
 
 ## Notes
 
