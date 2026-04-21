@@ -47,6 +47,7 @@ class TeachingAgent:
         on_text_chunk: Callable[[str], None] | None = None,
     ) -> AgentTurn:
         turn_messages = list(self.messages)
+        turn_messages.append({"role": "system", "content": self.settings.task_execution_prompt})
         turn_messages.append({"role": "user", "content": user_input})
         self.messages.append({"role": "user", "content": user_input})
 

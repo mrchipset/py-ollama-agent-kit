@@ -17,12 +17,18 @@ DEFAULT_SYSTEM_PROMPT = (
     "If you need a tool, emit a real tool call using tool_calls."
 )
 
+DEFAULT_TASK_EXECUTION_PROMPT = (
+    "When a task needs multiple steps, keep using tools until the task is complete. "
+    "Inspect each tool result, decide whether another tool call is needed, and only give the final answer once you have enough evidence."
+)
+
 
 @dataclass(slots=True)
 class Settings:
     ollama_host: str = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
     ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3.2")
     system_prompt: str = os.getenv("OLLAMA_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
+    task_execution_prompt: str = os.getenv("OLLAMA_TASK_EXECUTION_PROMPT", DEFAULT_TASK_EXECUTION_PROMPT)
     debug_log_path: str | None = os.getenv("OLLAMA_DEBUG_LOG_PATH") or None
     rag_auto_enabled: bool = os.getenv("RAG_AUTO_ENABLED", "true").lower() not in {"0", "false", "no", "off"}
     rag_index_path: str = os.getenv("RAG_INDEX_PATH", str(ROOT_DIR / "data" / "rag_index.json"))

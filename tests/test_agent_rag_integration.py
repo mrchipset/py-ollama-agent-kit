@@ -112,6 +112,54 @@ def test_agent_can_still_call_tools_when_rag_is_enabled() -> None:
     assert any(message["role"] == "tool" and message["name"] == "get_current_time" for message in client.calls[1]["messages"])
 
 
+def test_agent_can_chain_multiple_tool_calls_before_answering() -> None:
+    client = _ToolCallClient(
+        responses=[
+            {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "get_current_time",
+                                "arguments": {},
+                            }
+                        }
+                    ],
+                }
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "add_numbers",
+                                "arguments": {"a": 2, "b": 3},
+                            }
+                        }
+                    ],
+                }
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "The task is complete after combining the tool results.",
+                }
+            },
+        ]
+    )
+    agent = TeachingAgent(settings=Settings(), client=client)
+
+    turn = agent.run_turn("Get the time and add 2 and 3.")
+
+    assert turn.reply == "The task is complete after combining the tool results."
+    assert [event.name for event in turn.tool_events] == ["get_current_time", "add_numbers"]
+    assert len(client.calls) == 3
+    assert any(message["role"] == "tool" and message["name"] == "get_current_time" for message in client.calls[1]["messages"])
+    assert any(message["role"] == "tool" and message["name"] == "add_numbers" for message in client.calls[2]["messages"])
+
+
 def test_agent_skips_rag_for_tool_focused_questions() -> None:
     client = _ToolCallClient(
         responses=[
@@ -193,7 +241,7 @@ def test_agent_injects_retrieved_context_into_request() -> None:
     assert request_messages[-1]["role"] == "system"
     assert "Retrieved Markdown context" in request_messages[-1]["content"]
     assert "docs/guide.md#L1-L4" in request_messages[-1]["content"]
-    assert "How does the project work?" in request_messages[0]["content"] or request_messages[1]["content"] == "How does the project work?"
+    assert any(message["role"] == "user" and message["content"] == "How does the project work?" for message in request_messages)
 
 
 def test_agent_skips_rag_when_disabled() -> None:
