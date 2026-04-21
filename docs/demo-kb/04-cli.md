@@ -19,5 +19,8 @@ The sample environment is configured to use:
 - `OLLAMA_HOST=http://192.168.71.21:11434`
 - `OLLAMA_MODEL=qwen2.5-coder:1.5b`
 - `RAG_INDEX_PATH=data/rag_index.json`
+- `OLLAMA_TOOL_MODE=builtin`
+- `OLLAMA_TOOL_MODULES=`
+- `OLLAMA_TOOL_REGISTRY_STRICT=true`
 
 The embedding model can be configured separately so the knowledge base can remain stable even if the chat model changes.

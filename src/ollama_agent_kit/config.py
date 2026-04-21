@@ -29,6 +29,14 @@ class Settings:
     ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3.2")
     system_prompt: str = os.getenv("OLLAMA_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
     task_execution_prompt: str = os.getenv("OLLAMA_TASK_EXECUTION_PROMPT", DEFAULT_TASK_EXECUTION_PROMPT)
+    tool_mode: str = os.getenv("OLLAMA_TOOL_MODE", "builtin")
+    tool_modules: str = os.getenv("OLLAMA_TOOL_MODULES", "")
+    tool_registry_strict: bool = os.getenv("OLLAMA_TOOL_REGISTRY_STRICT", "true").lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
     debug_log_path: str | None = os.getenv("OLLAMA_DEBUG_LOG_PATH") or None
     rag_auto_enabled: bool = os.getenv("RAG_AUTO_ENABLED", "true").lower() not in {"0", "false", "no", "off"}
     rag_index_path: str = os.getenv("RAG_INDEX_PATH", str(ROOT_DIR / "data" / "rag_index.json"))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import importlib
 import json
 import subprocess
 import sys
@@ -8,11 +9,17 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from types import ModuleType
+from typing import Any, Callable, Protocol
 
 from .config import ROOT_DIR, Settings
 
 ToolHandler = Callable[[dict[str, Any]], str]
+
+
+class ToolProvider(Protocol):
+    def list_tools(self) -> list["ToolDefinition"]:
+        ...
 
 DEFAULT_ALLOWED_PYTHON_IMPORTS = {
     "bisect",
@@ -301,6 +308,14 @@ class ToolRegistry:
             raise KeyError(f"Unknown tool: {name}")
         return self._tools[name].handler(arguments)
 
+    def extend(self, tools: list[ToolDefinition], *, strict: bool = True) -> None:
+        for tool in tools:
+            if tool.name in self._tools:
+                if strict:
+                    raise ValueError(f"Duplicate tool name: {tool.name}")
+                continue
+            self._tools[tool.name] = tool
+
     @staticmethod
     def _coerce_arguments(raw_arguments: Any) -> dict[str, Any]:
         if isinstance(raw_arguments, dict):
@@ -318,6 +333,80 @@ def build_default_registry(
 ) -> ToolRegistry:
     root = (workspace_root or ROOT_DIR).resolve()
     active_settings = settings or Settings()
+    return ToolRegistry(_build_builtin_tools(root=root, active_settings=active_settings))
+
+
+def build_tool_registry(
+    workspace_root: Path | None = None,
+    settings: Settings | None = None,
+    *,
+    include_custom: bool = True,
+    extra_tools: list[ToolDefinition] | None = None,
+) -> ToolRegistry:
+    root = (workspace_root or ROOT_DIR).resolve()
+    active_settings = settings or Settings()
+
+    registry_mode = active_settings.tool_mode.strip().lower()
+    builtin_enabled = registry_mode in {"builtin", "builtin+custom", "default", ""}
+    custom_enabled = include_custom and registry_mode in {"builtin+custom", "custom-only"}
+
+    builtin_tools = _build_builtin_tools(root=root, active_settings=active_settings) if builtin_enabled else []
+    registry = ToolRegistry(builtin_tools)
+
+    if custom_enabled:
+        registry.extend(load_custom_tools(active_settings), strict=active_settings.tool_registry_strict)
+
+    if extra_tools:
+        registry.extend(extra_tools, strict=True)
+
+    return registry
+
+
+def load_custom_tools(settings: Settings) -> list[ToolDefinition]:
+    module_names = [module_name.strip() for module_name in settings.tool_modules.split(",") if module_name.strip()]
+    if not module_names:
+        return []
+
+    tools: list[ToolDefinition] = []
+    for module_name in module_names:
+        module = importlib.import_module(module_name)
+        tools.extend(_extract_tools_from_module(module))
+    return tools
+
+
+def _extract_tools_from_module(module: ModuleType) -> list[ToolDefinition]:
+    loader = getattr(module, "build_tools", None)
+    if not callable(loader):
+        loader = getattr(module, "get_tools", None)
+
+    if callable(loader):
+        candidate = loader()
+    else:
+        candidate = None
+        for attribute_name in ("TOOLS", "tools", "tool_definitions"):
+            if hasattr(module, attribute_name):
+                candidate = getattr(module, attribute_name)
+                break
+
+    if candidate is None:
+        raise ValueError(
+            f"Module {module.__name__!r} does not expose build_tools(), get_tools(), or a TOOLS/tools/tool_definitions collection."
+        )
+
+    if isinstance(candidate, ToolDefinition):
+        return [candidate]
+    if not isinstance(candidate, list):
+        raise TypeError(f"Unsupported tool provider output from {module.__name__!r}: {type(candidate)!r}")
+
+    validated_tools: list[ToolDefinition] = []
+    for tool in candidate:
+        if not isinstance(tool, ToolDefinition):
+            raise TypeError(f"Module {module.__name__!r} returned a non-ToolDefinition item: {type(tool)!r}")
+        validated_tools.append(tool)
+    return validated_tools
+
+
+def _build_builtin_tools(*, root: Path, active_settings: Settings) -> list[ToolDefinition]:
 
     def get_current_time(_: dict[str, Any]) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -427,7 +516,7 @@ def build_default_registry(
         result = json.loads(completed.stdout)
         return json.dumps(result, ensure_ascii=False)
 
-    tools = [
+    return [
         ToolDefinition(
             name="get_current_time",
             description="Return the current UTC time in ISO 8601 format.",
@@ -489,7 +578,6 @@ def build_default_registry(
             handler=read_workspace_file,
         ),
     ]
-    return ToolRegistry(tools)
 
 
 def _parse_allowed_imports(raw_imports: str) -> set[str]:

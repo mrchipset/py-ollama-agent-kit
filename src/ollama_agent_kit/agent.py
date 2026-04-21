@@ -9,7 +9,7 @@ from typing import Any, Callable
 from .config import Settings, get_settings
 from .ollama_client import OllamaClient
 from .rag import MarkdownRagStore, RagSearchHit, format_rag_context
-from .tools import ToolExecution, ToolRegistry, build_default_registry
+from .tools import ToolExecution, ToolRegistry, build_tool_registry
 
 
 @dataclass(slots=True)
@@ -33,7 +33,7 @@ class TeachingAgent:
         if self.client is None:
             self.client = OllamaClient(self.settings.ollama_host)
         if self.registry is None:
-            self.registry = build_default_registry(settings=self.settings)
+            self.registry = build_tool_registry(settings=self.settings)
         if not self.messages:
             self.messages.append({"role": "system", "content": self.settings.system_prompt})
         if self.rag_store is None and self.settings.rag_auto_enabled and self._client_supports_embeddings():

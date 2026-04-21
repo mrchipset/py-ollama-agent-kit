@@ -52,6 +52,23 @@ To write each user prompt and raw Ollama response to a JSONL file for debugging,
 ollama-agent chat --debug-log-path logs/ollama-debug.jsonl
 ```
 
+Tool registration can also be configured through `.env`:
+
+- `OLLAMA_TOOL_MODE=builtin` keeps only the built-in tools.
+- `OLLAMA_TOOL_MODE=builtin+custom` loads built-in tools and any modules listed in `OLLAMA_TOOL_MODULES`.
+- `OLLAMA_TOOL_MODE=custom-only` loads only custom tools from `OLLAMA_TOOL_MODULES`.
+- `OLLAMA_TOOL_MODULES=my_tools,other_tools` points to Python modules that expose `build_tools()`, `get_tools()`, or a `TOOLS` collection.
+- `OLLAMA_TOOL_REGISTRY_STRICT=true` fails on duplicate tool names instead of skipping them.
+- A minimal working example lives in [examples/custom_tools.py](examples/custom_tools.py).
+
+Example:
+
+```bash
+OLLAMA_TOOL_MODE=builtin+custom
+OLLAMA_TOOL_MODULES=my_project.tools
+OLLAMA_TOOL_REGISTRY_STRICT=true
+```
+
 You can disable automatic RAG injection when you want a pure chat session:
 
 ```bash

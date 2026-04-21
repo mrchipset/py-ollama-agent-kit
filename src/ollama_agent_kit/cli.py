@@ -23,12 +23,37 @@ app.add_typer(demo_app, name="demo")
 console = Console()
 
 DEFAULT_PYTHON_DEMO_PROMPT = "Use Python to add 17 and 25, then show the result."
+def _apply_tool_settings(
+    settings,
+    *,
+    tool_modules: str | None = None,
+    tool_mode: str | None = None,
+    tool_registry_strict: bool | None = None,
+) -> None:
+    if tool_modules is not None:
+        settings.tool_modules = tool_modules
+    if tool_mode is not None:
+        settings.tool_mode = tool_mode
+    if tool_registry_strict is not None:
+        settings.tool_registry_strict = tool_registry_strict
 
 
-def _build_agent(model: str | None = None) -> TeachingAgent:
+def _build_agent(
+    model: str | None = None,
+    *,
+    tool_modules: str | None = None,
+    tool_mode: str | None = None,
+    tool_registry_strict: bool | None = None,
+) -> TeachingAgent:
     settings = get_settings()
     if model:
         settings.ollama_model = model
+    _apply_tool_settings(
+        settings,
+        tool_modules=tool_modules,
+        tool_mode=tool_mode,
+        tool_registry_strict=tool_registry_strict,
+    )
     return TeachingAgent(settings=settings)
 
 
@@ -97,6 +122,19 @@ def models() -> None:
 def chat(
     prompt: Optional[str] = typer.Argument(None, help="Optional one-shot prompt."),
     model: Optional[str] = typer.Option(None, help="Override the model name for this session."),
+    tool_modules: Optional[str] = typer.Option(
+        None,
+        help="Comma-separated Python modules that expose build_tools() or TOOLS.",
+    ),
+    tool_mode: Optional[str] = typer.Option(
+        None,
+        help="Tool registry mode: builtin, builtin+custom, or custom-only.",
+    ),
+    tool_registry_strict: bool = typer.Option(
+        True,
+        "--strict-tools/--no-strict-tools",
+        help="Fail on duplicate tool names instead of skipping them.",
+    ),
     rag: bool = typer.Option(True, "--rag/--no-rag", help="Enable or disable automatic Markdown RAG context injection."),
     stream: bool = typer.Option(
         False,
@@ -108,7 +146,12 @@ def chat(
         help="Write user requests and Ollama responses to this JSONL file.",
     ),
 ) -> None:
-    agent = _build_agent(model=model)
+    agent = _build_agent(
+        model=model,
+        tool_modules=tool_modules,
+        tool_mode=tool_mode,
+        tool_registry_strict=tool_registry_strict,
+    )
     agent.settings.rag_auto_enabled = rag
     if not rag:
         agent.rag_store = None
@@ -193,6 +236,19 @@ def main() -> None:
 def demo_python(
     prompt: Optional[str] = typer.Option(None, help="Override the default Python demo prompt."),
     model: Optional[str] = typer.Option(None, help="Override the model name for this demo."),
+    tool_modules: Optional[str] = typer.Option(
+        None,
+        help="Comma-separated Python modules that expose build_tools() or TOOLS.",
+    ),
+    tool_mode: Optional[str] = typer.Option(
+        None,
+        help="Tool registry mode: builtin, builtin+custom, or custom-only.",
+    ),
+    tool_registry_strict: bool = typer.Option(
+        True,
+        "--strict-tools/--no-strict-tools",
+        help="Fail on duplicate tool names instead of skipping them.",
+    ),
     stream: bool = typer.Option(
         True,
         "--stream/--no-stream",
@@ -204,7 +260,12 @@ def demo_python(
         help="Enable or disable automatic Markdown RAG context injection for the demo.",
     ),
 ) -> None:
-    agent = _build_agent(model=model)
+    agent = _build_agent(
+        model=model,
+        tool_modules=tool_modules,
+        tool_mode=tool_mode,
+        tool_registry_strict=tool_registry_strict,
+    )
     agent.settings.rag_auto_enabled = rag
     if not rag:
         agent.rag_store = None
