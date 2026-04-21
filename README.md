@@ -81,6 +81,30 @@ To run the guided Python tool demo directly:
 ollama-agent demo python
 ```
 
+## Todo List
+
+### 已完成
+
+- Markdown RAG 基础接入
+- 受控 Python 执行工具
+- 多轮工具调用与任务执行提示
+- 自定义工具注册机制
+- `.env` 中的 tool 相关配置
+- 最小自定义工具示例
+
+### 待完成
+
+- 会话导出功能
+- 更强的教学场景模板
+- RAG 索引管理增强
+- 更丰富的 RAG 数据源
+- 对话上下文管理
+- 更完整的错误恢复与重试
+- 更完整的可观测性
+- 更强的 RAG 检索质量
+- 多模型策略
+- 更完整的测试与文档体系
+
 ## Markdown RAG MVP
 
 This workspace now includes a minimal Markdown RAG flow for teaching and debugging.
