@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,8 @@ from typing import Any
 from .ollama_client import OllamaClient
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
+_SUPPORTED_SCHEMA_VERSIONS = {1, 2}
 
 
 @dataclass(slots=True)
@@ -18,6 +20,63 @@ class RagAddResult:
     source_path: str
     chunks_added: int
     total_chunks: int
+
+
+@dataclass(slots=True)
+class RagBatchAddResult:
+    sources_added: int
+    chunks_added: int
+    total_chunks: int
+
+
+@dataclass(slots=True)
+class RagRebuildResult:
+    chunks_rebuilt: int
+    total_chunks: int
+
+
+@dataclass(slots=True)
+class RagRefreshResult:
+    sources_scanned: int
+    sources_rebuilt: int
+    chunks_rebuilt: int
+    total_chunks: int
+    stale_sources: list[str]
+    missing_sources: list[str]
+
+
+@dataclass(slots=True)
+class RagDeleteResult:
+    source_path: str
+    chunks_deleted: int
+    total_chunks: int
+
+
+@dataclass(slots=True)
+class RagIndexStats:
+    source_count: int
+    chunk_count: int
+    embedding_model: str
+    chunk_size: int
+    chunk_overlap: int
+
+
+@dataclass(slots=True)
+class RagHealthIssue:
+    severity: str
+    code: str
+    message: str
+    source_path: str | None = None
+
+
+@dataclass(slots=True)
+class RagHealthCheckResult:
+    healthy: bool
+    source_count: int
+    chunk_count: int
+    stale_sources: list[str]
+    missing_sources: list[str]
+    issues: list[RagHealthIssue]
 
 
 @dataclass(slots=True)
@@ -63,6 +122,8 @@ class _ChunkRecord:
     line_end: int
     text: str
     embedding: list[float]
+    source_mtime_ns: int | None = None
+    source_size: int | None = None
 
 
 @dataclass(slots=True)
@@ -107,8 +168,15 @@ class MarkdownRagStore:
         text = source_path.read_text(encoding="utf-8")
         relative_source_path = source_path.relative_to(self.workspace_root).as_posix()
         self._chunks = [chunk for chunk in self._chunks if chunk.source_path != relative_source_path]
+        source_mtime_ns, source_size = self._get_source_metadata(source_path)
 
-        chunks = self._build_chunks(relative_source_path, text, source_path.stem)
+        chunks = self._build_chunks(
+            relative_source_path,
+            text,
+            source_path.stem,
+            source_mtime_ns=source_mtime_ns,
+            source_size=source_size,
+        )
         for chunk in chunks:
             chunk.embedding = self.client.embeddings(model=self.embedding_model, prompt=chunk.text)
 
@@ -121,10 +189,216 @@ class MarkdownRagStore:
             total_chunks=len(self._chunks),
         )
 
+    def add_markdown_directory(self, path: Path, *, recursive: bool = True) -> RagBatchAddResult:
+        directory = self._resolve_source_directory(path)
+        markdown_paths = self._collect_markdown_paths(directory, recursive=recursive)
+        sources_added = 0
+        chunks_added = 0
+
+        for markdown_path in markdown_paths:
+            result = self.add_markdown_file(markdown_path.relative_to(self.workspace_root))
+            sources_added += 1
+            chunks_added += result.chunks_added
+
+        return RagBatchAddResult(
+            sources_added=sources_added,
+            chunks_added=chunks_added,
+            total_chunks=len(self._chunks),
+        )
+
+    def rebuild_index(self) -> RagRebuildResult:
+        rebuilt = 0
+        for chunk in self._chunks:
+            chunk.embedding = self.client.embeddings(model=self.embedding_model, prompt=chunk.text)
+            rebuilt += 1
+
+        self._save()
+        return RagRebuildResult(chunks_rebuilt=rebuilt, total_chunks=len(self._chunks))
+
+    def refresh_index(self) -> RagRefreshResult:
+        source_groups = self._group_chunks_by_source()
+        sources_scanned = len(source_groups)
+        sources_rebuilt = 0
+        chunks_rebuilt = 0
+        stale_sources: list[str] = []
+        missing_sources: list[str] = []
+        retained_chunks: list[_ChunkRecord] = []
+
+        for source_path, source_chunks in sorted(source_groups.items()):
+            source_file = self.workspace_root / source_path
+            if not source_file.exists():
+                missing_sources.append(source_path)
+                retained_chunks.extend(source_chunks)
+                continue
+
+            source_mtime_ns, source_size = self._get_source_metadata(source_file)
+            if not self._source_matches_metadata(source_chunks, source_mtime_ns, source_size):
+                stale_sources.append(source_path)
+                sources_rebuilt += 1
+                text = source_file.read_text(encoding="utf-8")
+                rebuilt_chunks = self._build_chunks(
+                    source_path,
+                    text,
+                    source_file.stem,
+                    source_mtime_ns=source_mtime_ns,
+                    source_size=source_size,
+                )
+                for chunk in rebuilt_chunks:
+                    chunk.embedding = self.client.embeddings(model=self.embedding_model, prompt=chunk.text)
+                chunks_rebuilt += len(rebuilt_chunks)
+                retained_chunks.extend(rebuilt_chunks)
+                continue
+
+            retained_chunks.extend(source_chunks)
+
+        self._chunks = retained_chunks
+        if sources_rebuilt:
+            self._save()
+
+        return RagRefreshResult(
+            sources_scanned=sources_scanned,
+            sources_rebuilt=sources_rebuilt,
+            chunks_rebuilt=chunks_rebuilt,
+            total_chunks=len(self._chunks),
+            stale_sources=stale_sources,
+            missing_sources=missing_sources,
+        )
+
+    def delete_source(self, path: Path) -> RagDeleteResult:
+        candidate = (self.workspace_root / path).resolve()
+        candidate.relative_to(self.workspace_root)
+        relative_source_path = candidate.relative_to(self.workspace_root).as_posix()
+        before_count = len(self._chunks)
+        self._chunks = [chunk for chunk in self._chunks if chunk.source_path != relative_source_path]
+        deleted_count = before_count - len(self._chunks)
+        if deleted_count:
+            self._save()
+
+        return RagDeleteResult(
+            source_path=relative_source_path,
+            chunks_deleted=deleted_count,
+            total_chunks=len(self._chunks),
+        )
+
+    def health_check(self) -> RagHealthCheckResult:
+        source_groups = self._group_chunks_by_source()
+        issues: list[RagHealthIssue] = []
+        stale_sources: list[str] = []
+        missing_sources: list[str] = []
+
+        if not self._chunks:
+            issues.append(
+                RagHealthIssue(
+                    severity="warning",
+                    code="empty_index",
+                    message="The RAG index does not contain any chunks yet.",
+                )
+            )
+
+        seen_chunk_ids: set[str] = set()
+        for chunk in self._chunks:
+            if chunk.chunk_id in seen_chunk_ids:
+                issues.append(
+                    RagHealthIssue(
+                        severity="error",
+                        code="duplicate_chunk_id",
+                        message=f"Duplicate chunk id detected: {chunk.chunk_id}",
+                        source_path=chunk.source_path,
+                    )
+                )
+            else:
+                seen_chunk_ids.add(chunk.chunk_id)
+
+            if not chunk.embedding:
+                issues.append(
+                    RagHealthIssue(
+                        severity="error",
+                        code="missing_embedding",
+                        message=f"Chunk has no embedding: {chunk.chunk_id}",
+                        source_path=chunk.source_path,
+                    )
+                )
+
+            if chunk.line_end < chunk.line_start:
+                issues.append(
+                    RagHealthIssue(
+                        severity="error",
+                        code="invalid_line_range",
+                        message=f"Chunk line range is invalid: {chunk.line_start}-{chunk.line_end}",
+                        source_path=chunk.source_path,
+                    )
+                )
+
+        for source_path, source_chunks in sorted(source_groups.items()):
+            source_file = self.workspace_root / source_path
+            if not source_file.exists():
+                missing_sources.append(source_path)
+                issues.append(
+                    RagHealthIssue(
+                        severity="error",
+                        code="missing_source",
+                        message=f"Indexed source file is missing: {source_path}",
+                        source_path=source_path,
+                    )
+                )
+                continue
+
+            source_mtime_ns, source_size = self._get_source_metadata(source_file)
+            if not self._source_matches_metadata(source_chunks, source_mtime_ns, source_size):
+                stale_sources.append(source_path)
+                issues.append(
+                    RagHealthIssue(
+                        severity="warning",
+                        code="stale_source",
+                        message=f"Indexed content is stale for source: {source_path}",
+                        source_path=source_path,
+                    )
+                )
+
+        healthy = not any(issue.severity == "error" for issue in issues)
+        return RagHealthCheckResult(
+            healthy=healthy,
+            source_count=len(source_groups),
+            chunk_count=len(self._chunks),
+            stale_sources=stale_sources,
+            missing_sources=missing_sources,
+            issues=issues,
+        )
+
     def clear(self) -> None:
         self._chunks = []
         if self.index_path.exists():
             self.index_path.unlink()
+
+    def list_documents(self) -> list[dict[str, Any]]:
+        if not self._chunks:
+            return []
+
+        counts = Counter(chunk.source_path for chunk in self._chunks)
+        documents: list[dict[str, Any]] = []
+        for source_path in sorted(counts):
+            source_chunks = [chunk for chunk in self._chunks if chunk.source_path == source_path]
+            line_start = min(chunk.heading_line or chunk.line_start for chunk in source_chunks)
+            line_end = max(chunk.line_end for chunk in source_chunks)
+            documents.append(
+                {
+                    "source_path": source_path,
+                    "chunk_count": counts[source_path],
+                    "line_start": line_start,
+                    "line_end": line_end,
+                    "citation": self._build_citation(source_chunks[0]),
+                }
+            )
+        return documents
+
+    def stats(self) -> RagIndexStats:
+        return RagIndexStats(
+            source_count=len({chunk.source_path for chunk in self._chunks}),
+            chunk_count=len(self._chunks),
+            embedding_model=self.embedding_model,
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
+        )
 
     def search(self, query: str, *, top_k: int = 5) -> list[RagSearchHit]:
         if top_k <= 0 or not self._chunks:
@@ -154,7 +428,15 @@ class MarkdownRagStore:
             )
         return hits
 
-    def _build_chunks(self, source_path: str, text: str, fallback_title: str) -> list[_ChunkRecord]:
+    def _build_chunks(
+        self,
+        source_path: str,
+        text: str,
+        fallback_title: str,
+        *,
+        source_mtime_ns: int | None = None,
+        source_size: int | None = None,
+    ) -> list[_ChunkRecord]:
         lines = text.splitlines()
         sections = self._split_sections(lines)
         chunks: list[_ChunkRecord] = []
@@ -178,6 +460,8 @@ class MarkdownRagStore:
                         line_end=line_end,
                         text=chunk_text,
                         embedding=[],
+                        source_mtime_ns=source_mtime_ns,
+                        source_size=source_size,
                     )
                 )
                 chunk_counter += 1
@@ -310,6 +594,8 @@ class MarkdownRagStore:
                     "line_end": chunk.line_end,
                     "text": chunk.text,
                     "embedding": chunk.embedding,
+                    "source_mtime_ns": chunk.source_mtime_ns,
+                    "source_size": chunk.source_size,
                 }
                 for chunk in self._chunks
             ],
@@ -322,7 +608,8 @@ class MarkdownRagStore:
             return
 
         payload = json.loads(self.index_path.read_text(encoding="utf-8"))
-        if payload.get("schema_version") != _SCHEMA_VERSION:
+        schema_version = payload.get("schema_version")
+        if schema_version not in _SUPPORTED_SCHEMA_VERSIONS:
             raise ValueError("Unsupported RAG index schema version.")
 
         stored_embedding_model = payload.get("embedding_model")
@@ -341,6 +628,8 @@ class MarkdownRagStore:
                 line_end=int(chunk["line_end"]),
                 text=chunk["text"],
                 embedding=[float(value) for value in chunk.get("embedding", [])],
+                source_mtime_ns=chunk.get("source_mtime_ns"),
+                source_size=chunk.get("source_size"),
             )
             for chunk in payload.get("chunks", [])
         ]
@@ -351,6 +640,43 @@ class MarkdownRagStore:
         if not candidate.is_file():
             raise FileNotFoundError(f"Not a file: {path}")
         return candidate
+
+    def _resolve_source_directory(self, path: Path) -> Path:
+        candidate = (self.workspace_root / path).resolve()
+        candidate.relative_to(self.workspace_root)
+        if not candidate.is_dir():
+            raise FileNotFoundError(f"Not a directory: {path}")
+        return candidate
+
+    def _get_source_metadata(self, path: Path) -> tuple[int, int]:
+        stat_result = path.stat()
+        return stat_result.st_mtime_ns, stat_result.st_size
+
+    def _group_chunks_by_source(self) -> dict[str, list[_ChunkRecord]]:
+        groups: dict[str, list[_ChunkRecord]] = {}
+        for chunk in self._chunks:
+            groups.setdefault(chunk.source_path, []).append(chunk)
+        return groups
+
+    def _source_matches_metadata(
+        self,
+        chunks: list[_ChunkRecord],
+        source_mtime_ns: int,
+        source_size: int,
+    ) -> bool:
+        return all(
+            chunk.source_mtime_ns == source_mtime_ns and chunk.source_size == source_size
+            for chunk in chunks
+        )
+
+    def _collect_markdown_paths(self, directory: Path, *, recursive: bool) -> list[Path]:
+        if recursive:
+            paths = [path for path in directory.rglob("*") if path.is_file()]
+        else:
+            paths = [path for path in directory.iterdir() if path.is_file()]
+
+        markdown_suffixes = {".md", ".markdown", ".mdown"}
+        return sorted(path for path in paths if path.suffix.lower() in markdown_suffixes)
 
     def _resolve_path(self, path: Path) -> Path:
         candidate = path if path.is_absolute() else (self.workspace_root / path)

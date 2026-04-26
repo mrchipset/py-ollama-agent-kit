@@ -294,10 +294,19 @@ def demo_python(
 
 @rag_app.command("add")
 def rag_add(
-    path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, help="Markdown file to add."),
+    path: Path = typer.Argument(..., exists=True, readable=True, help="Markdown file or directory to add."),
+    recursive: bool = typer.Option(True, "--recursive/--no-recursive", help="Recursively import Markdown files when the path is a directory."),
 ) -> None:
     try:
-        result = _build_rag_store().add_markdown_file(path)
+        store = _build_rag_store()
+        if path.is_dir():
+            result = store.add_markdown_directory(path, recursive=recursive)
+            console.print(
+                f"Added {result.sources_added} source files with {result.chunks_added} chunks into {result.total_chunks} total chunks."
+            )
+            return
+
+        result = store.add_markdown_file(path)
     except (FileNotFoundError, ValueError, OllamaAPIError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
@@ -345,3 +354,104 @@ def rag_clear() -> None:
     store = _build_rag_store()
     store.clear()
     console.print("RAG index cleared.")
+
+
+@rag_app.command("delete")
+def rag_delete(
+    path: Path = typer.Argument(..., dir_okay=False, help="Indexed Markdown file to remove."),
+) -> None:
+    try:
+        result = _build_rag_store().delete_source(path)
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        f"Deleted {result.chunks_deleted} chunks from {result.source_path}; {result.total_chunks} chunks remain."
+    )
+
+
+@rag_app.command("rebuild")
+def rag_rebuild() -> None:
+    store = _build_rag_store()
+    result = store.rebuild_index()
+    console.print(
+        f"Rebuilt embeddings for {result.chunks_rebuilt} chunks across {result.total_chunks} total chunks."
+    )
+
+
+@rag_app.command("refresh")
+def rag_refresh() -> None:
+    store = _build_rag_store()
+    result = store.refresh_index()
+    console.print(
+        f"Scanned {result.sources_scanned} sources and rebuilt {result.sources_rebuilt} sources with {result.chunks_rebuilt} chunks."
+    )
+    if result.stale_sources:
+        console.print(f"Stale sources: {', '.join(result.stale_sources)}")
+    if result.missing_sources:
+        console.print(f"Missing sources: {', '.join(result.missing_sources)}")
+
+
+@rag_app.command("health")
+def rag_health() -> None:
+    store = _build_rag_store()
+    result = store.health_check()
+
+    console.print(f"Healthy: {'yes' if result.healthy else 'no'}")
+    console.print(f"Indexed documents: {result.source_count}")
+    console.print(f"Indexed chunks: {result.chunk_count}")
+    console.print(f"Stale sources: {len(result.stale_sources)}")
+    console.print(f"Missing sources: {len(result.missing_sources)}")
+
+    if not result.issues:
+        return
+
+    table = Table(title="RAG health issues")
+    table.add_column("Severity")
+    table.add_column("Code")
+    table.add_column("Source")
+    table.add_column("Message")
+
+    for issue in result.issues:
+        table.add_row(issue.severity, issue.code, issue.source_path or "-", issue.message)
+
+    console.print(table)
+
+
+@rag_app.command("list")
+def rag_list() -> None:
+    store = _build_rag_store()
+    documents = store.list_documents()
+
+    if not documents:
+        console.print("No documents have been indexed yet.")
+        return
+
+    table = Table(title="Indexed documents")
+    table.add_column("Source path")
+    table.add_column("Chunks", justify="right")
+    table.add_column("Lines")
+    table.add_column("Citation")
+
+    for document in documents:
+        table.add_row(
+            document["source_path"],
+            str(document["chunk_count"]),
+            f'L{document["line_start"]}-L{document["line_end"]}',
+            document["citation"],
+        )
+
+    console.print(table)
+
+
+@rag_app.command("stats")
+def rag_stats() -> None:
+    store = _build_rag_store()
+    stats = store.stats()
+
+    console.print(f"Indexed documents: {stats.source_count}")
+    console.print(f"Indexed chunks: {stats.chunk_count}")
+    console.print(f"Embedding model: {stats.embedding_model}")
+    console.print(f"Chunk size: {stats.chunk_size}")
+    console.print(f"Chunk overlap: {stats.chunk_overlap}")
