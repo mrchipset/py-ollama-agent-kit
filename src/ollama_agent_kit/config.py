@@ -29,6 +29,14 @@ class Settings:
     ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3.2")
     system_prompt: str = os.getenv("OLLAMA_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
     task_execution_prompt: str = os.getenv("OLLAMA_TASK_EXECUTION_PROMPT", DEFAULT_TASK_EXECUTION_PROMPT)
+    context_max_messages: int = int(os.getenv("CONTEXT_MAX_MESSAGES", "24"))
+    context_summary_enabled: bool = os.getenv("CONTEXT_SUMMARY_ENABLED", "true").lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+    context_summary_max_chars: int = int(os.getenv("CONTEXT_SUMMARY_MAX_CHARS", "1200"))
     tool_mode: str = os.getenv("OLLAMA_TOOL_MODE", "builtin")
     tool_modules: str = os.getenv("OLLAMA_TOOL_MODULES", "")
     tool_registry_strict: bool = os.getenv("OLLAMA_TOOL_REGISTRY_STRICT", "true").lower() not in {

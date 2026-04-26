@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .config import Settings, get_settings
+from .context_manager import compact_messages, compress_messages, SUMMARY_PREFIX
 from .ollama_client import OllamaClient
 from .rag import MarkdownRagStore, RagSearchHit, format_rag_context
 from .tools import ToolExecution, ToolRegistry, build_tool_registry
@@ -27,6 +28,7 @@ class TeachingAgent:
     client: OllamaClient | None = None
     rag_store: MarkdownRagStore | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
+    conversation_summary: str | None = None
     max_tool_rounds: int = 6
     max_hallucination_retries: int = 2
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
@@ -51,7 +53,7 @@ class TeachingAgent:
     ) -> AgentTurn:
         self.turn_counter += 1
         turn_id = self.turn_counter
-        turn_messages = list(self.messages)
+        turn_messages = self._build_turn_messages()
         turn_messages.append({"role": "system", "content": self.settings.task_execution_prompt})
         turn_messages.append({"role": "user", "content": user_input})
         self.messages.append({"role": "user", "content": user_input})
@@ -134,18 +136,12 @@ class TeachingAgent:
                 turn_messages.append(message)
                 reply = (message.get("content") or "").strip()
                 if reply:
-                    self._write_debug_event(
-                        "turn_complete",
-                        {
-                            "session_id": self.session_id,
-                            "turn_id": turn_id,
-                            "status": "ok",
-                            "reply": reply,
-                            "tool_events": [self._serialize_tool_event(event) for event in tool_events],
-                            "rag_hits": [self._serialize_rag_hit(hit) for hit in rag_hits],
-                        },
+                    return self._finish_turn(
+                        turn_id,
+                        reply=reply,
+                        tool_events=tool_events,
+                        rag_hits=rag_hits,
                     )
-                    return AgentTurn(reply=reply, tool_events=tool_events, rag_hits=rag_hits)
 
                 self._write_debug_event(
                     "empty_assistant_response",
@@ -164,56 +160,38 @@ class TeachingAgent:
                 )
                 if retry_reply:
                     self.messages[-1] = {"role": "assistant", "content": retry_reply}
-                    self._write_debug_event(
-                        "turn_complete",
-                        {
-                            "session_id": self.session_id,
-                            "turn_id": turn_id,
-                            "status": "ok",
-                            "reply": retry_reply,
-                            "tool_events": [self._serialize_tool_event(event) for event in tool_events],
-                            "rag_hits": [self._serialize_rag_hit(hit) for hit in rag_hits],
-                            "recovered_from": "empty_assistant_response",
-                        },
+                    return self._finish_turn(
+                        turn_id,
+                        reply=retry_reply,
+                        tool_events=tool_events,
+                        rag_hits=rag_hits,
+                        recovery_note="empty_assistant_response",
                     )
-                    return AgentTurn(reply=retry_reply, tool_events=tool_events, rag_hits=rag_hits)
 
                 if rag_hits:
                     fallback_reply = self._build_rag_fallback_reply(rag_hits)
                     if on_text_chunk is not None:
                         on_text_chunk(fallback_reply)
                     self.messages[-1] = {"role": "assistant", "content": fallback_reply}
-                    self._write_debug_event(
-                        "turn_complete",
-                        {
-                            "session_id": self.session_id,
-                            "turn_id": turn_id,
-                            "status": "ok",
-                            "reply": fallback_reply,
-                            "tool_events": [self._serialize_tool_event(event) for event in tool_events],
-                            "rag_hits": [self._serialize_rag_hit(hit) for hit in rag_hits],
-                            "recovered_from": "rag_fallback",
-                        },
+                    return self._finish_turn(
+                        turn_id,
+                        reply=fallback_reply,
+                        tool_events=tool_events,
+                        rag_hits=rag_hits,
+                        recovery_note="rag_fallback",
                     )
-                    return AgentTurn(reply=fallback_reply, tool_events=tool_events, rag_hits=rag_hits)
 
                 fallback_reply = "The model returned an empty response."
                 if on_text_chunk is not None:
                     on_text_chunk(fallback_reply)
                 self.messages[-1] = {"role": "assistant", "content": fallback_reply}
-                self._write_debug_event(
-                    "turn_complete",
-                    {
-                        "session_id": self.session_id,
-                        "turn_id": turn_id,
-                        "status": "ok",
-                        "reply": fallback_reply,
-                        "tool_events": [self._serialize_tool_event(event) for event in tool_events],
-                        "rag_hits": [self._serialize_rag_hit(hit) for hit in rag_hits],
-                        "recovered_from": "empty_response_fallback",
-                    },
+                return self._finish_turn(
+                    turn_id,
+                    reply=fallback_reply,
+                    tool_events=tool_events,
+                    rag_hits=rag_hits,
+                    recovery_note="empty_response_fallback",
                 )
-                return AgentTurn(reply=fallback_reply, tool_events=tool_events, rag_hits=rag_hits)
 
             unknown_tool_name = self._unknown_tool_name(tool_calls)
             if unknown_tool_name is not None:
@@ -277,6 +255,55 @@ class TeachingAgent:
                 turn_messages.append(tool_message)
 
         raise RuntimeError("Tool loop exceeded the configured max_tool_rounds.")
+
+    def _finish_turn(
+        self,
+        turn_id: int,
+        *,
+        reply: str,
+        tool_events: list[ToolExecution],
+        rag_hits: list[RagSearchHit],
+        recovery_note: str | None = None,
+    ) -> AgentTurn:
+        payload: dict[str, Any] = {
+            "session_id": self.session_id,
+            "turn_id": turn_id,
+            "status": "ok",
+            "reply": reply,
+            "tool_events": [self._serialize_tool_event(event) for event in tool_events],
+            "rag_hits": [self._serialize_rag_hit(hit) for hit in rag_hits],
+        }
+        if recovery_note is not None:
+            payload["recovered_from"] = recovery_note
+
+        self._write_debug_event("turn_complete", payload)
+        if self.settings.context_summary_enabled:
+            self.messages, self.conversation_summary = compress_messages(
+                self.messages,
+                max_messages=self.settings.context_max_messages,
+                previous_summary=self.conversation_summary,
+                summary_max_chars=self.settings.context_summary_max_chars,
+            )
+        else:
+            self.messages = compact_messages(self.messages, max_messages=self.settings.context_max_messages)
+        return AgentTurn(reply=reply, tool_events=tool_events, rag_hits=rag_hits)
+
+    def _build_turn_messages(self) -> list[dict[str, Any]]:
+        turn_messages = list(self.messages)
+        summary_message = self._build_summary_message()
+        if summary_message is not None:
+            insert_index = 1 if turn_messages and turn_messages[0].get("role") == "system" else 0
+            turn_messages.insert(insert_index, summary_message)
+        return turn_messages
+
+    def _build_summary_message(self) -> dict[str, Any] | None:
+        if not self.conversation_summary:
+            return None
+
+        return {
+            "role": "system",
+            "content": f"{SUMMARY_PREFIX}:\n{self.conversation_summary}",
+        }
 
     def _write_debug_event(self, event: str, payload: dict[str, Any]) -> None:
         if not self.settings.debug_log_path:

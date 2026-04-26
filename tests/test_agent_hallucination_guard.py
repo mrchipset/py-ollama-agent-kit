@@ -94,7 +94,8 @@ def test_unknown_real_tool_call_is_rejected_and_retried() -> None:
             },
         ]
     )
-    agent = TeachingAgent(settings=Settings(), client=client)
+    settings = Settings(tool_mode="builtin", tool_modules="")
+    agent = TeachingAgent(settings=settings, client=client)
 
     turn = agent.run_turn("你好")
 
