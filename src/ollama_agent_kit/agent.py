@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +29,8 @@ class TeachingAgent:
     messages: list[dict[str, Any]] = field(default_factory=list)
     max_tool_rounds: int = 6
     max_hallucination_retries: int = 2
+    session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    turn_counter: int = 0
 
     def __post_init__(self) -> None:
         if self.client is None:
@@ -46,6 +49,8 @@ class TeachingAgent:
         rag_hits: list[RagSearchHit] | None = None,
         on_text_chunk: Callable[[str], None] | None = None,
     ) -> AgentTurn:
+        self.turn_counter += 1
+        turn_id = self.turn_counter
         turn_messages = list(self.messages)
         turn_messages.append({"role": "system", "content": self.settings.task_execution_prompt})
         turn_messages.append({"role": "user", "content": user_input})
@@ -53,6 +58,7 @@ class TeachingAgent:
 
         if rag_hits is None and self.should_use_rag(user_input):
             rag_hits = self._search_rag(user_input)
+        rag_hits = rag_hits or []
         rag_context = self._build_rag_context(rag_hits)
         if rag_context is not None:
             turn_messages.append(rag_context)
@@ -60,8 +66,11 @@ class TeachingAgent:
         self._write_debug_event(
             "user_input",
             {
+                "session_id": self.session_id,
+                "turn_id": turn_id,
                 "user_input": user_input,
-                "messages": self.messages,
+                "rag_hit_count": len(rag_hits),
+                "rag_hits": [self._serialize_rag_hit(hit) for hit in rag_hits],
             },
         )
         tool_events: list[ToolExecution] = []
@@ -73,9 +82,9 @@ class TeachingAgent:
                 "messages": turn_messages,
                 "tools": self.registry.schemas(),
             }
-            self._write_debug_event("ollama_request", request_body)
+            self._write_debug_event("ollama_request", {"session_id": self.session_id, "turn_id": turn_id, **request_body})
             response = self._chat_response(turn_messages, on_text_chunk=on_text_chunk)
-            self._write_debug_event("ollama_response", response)
+            self._write_debug_event("ollama_response", {"session_id": self.session_id, "turn_id": turn_id, **response})
             message = response.get("message", {})
 
             if self._looks_like_fake_tool_call(message):
@@ -83,6 +92,8 @@ class TeachingAgent:
                 self._write_debug_event(
                     "hallucinated_tool_call",
                     {
+                        "session_id": self.session_id,
+                        "turn_id": turn_id,
                         "message": message,
                         "retry_count": hallucination_retries,
                     },
@@ -123,11 +134,24 @@ class TeachingAgent:
                 turn_messages.append(message)
                 reply = (message.get("content") or "").strip()
                 if reply:
+                    self._write_debug_event(
+                        "turn_complete",
+                        {
+                            "session_id": self.session_id,
+                            "turn_id": turn_id,
+                            "status": "ok",
+                            "reply": reply,
+                            "tool_events": [self._serialize_tool_event(event) for event in tool_events],
+                            "rag_hits": [self._serialize_rag_hit(hit) for hit in rag_hits],
+                        },
+                    )
                     return AgentTurn(reply=reply, tool_events=tool_events, rag_hits=rag_hits)
 
                 self._write_debug_event(
                     "empty_assistant_response",
                     {
+                        "session_id": self.session_id,
+                        "turn_id": turn_id,
                         "user_input": user_input,
                         "rag_hit_count": len(rag_hits),
                     },
@@ -140,6 +164,18 @@ class TeachingAgent:
                 )
                 if retry_reply:
                     self.messages[-1] = {"role": "assistant", "content": retry_reply}
+                    self._write_debug_event(
+                        "turn_complete",
+                        {
+                            "session_id": self.session_id,
+                            "turn_id": turn_id,
+                            "status": "ok",
+                            "reply": retry_reply,
+                            "tool_events": [self._serialize_tool_event(event) for event in tool_events],
+                            "rag_hits": [self._serialize_rag_hit(hit) for hit in rag_hits],
+                            "recovered_from": "empty_assistant_response",
+                        },
+                    )
                     return AgentTurn(reply=retry_reply, tool_events=tool_events, rag_hits=rag_hits)
 
                 if rag_hits:
@@ -147,12 +183,36 @@ class TeachingAgent:
                     if on_text_chunk is not None:
                         on_text_chunk(fallback_reply)
                     self.messages[-1] = {"role": "assistant", "content": fallback_reply}
+                    self._write_debug_event(
+                        "turn_complete",
+                        {
+                            "session_id": self.session_id,
+                            "turn_id": turn_id,
+                            "status": "ok",
+                            "reply": fallback_reply,
+                            "tool_events": [self._serialize_tool_event(event) for event in tool_events],
+                            "rag_hits": [self._serialize_rag_hit(hit) for hit in rag_hits],
+                            "recovered_from": "rag_fallback",
+                        },
+                    )
                     return AgentTurn(reply=fallback_reply, tool_events=tool_events, rag_hits=rag_hits)
 
                 fallback_reply = "The model returned an empty response."
                 if on_text_chunk is not None:
                     on_text_chunk(fallback_reply)
                 self.messages[-1] = {"role": "assistant", "content": fallback_reply}
+                self._write_debug_event(
+                    "turn_complete",
+                    {
+                        "session_id": self.session_id,
+                        "turn_id": turn_id,
+                        "status": "ok",
+                        "reply": fallback_reply,
+                        "tool_events": [self._serialize_tool_event(event) for event in tool_events],
+                        "rag_hits": [self._serialize_rag_hit(hit) for hit in rag_hits],
+                        "recovered_from": "empty_response_fallback",
+                    },
+                )
                 return AgentTurn(reply=fallback_reply, tool_events=tool_events, rag_hits=rag_hits)
 
             unknown_tool_name = self._unknown_tool_name(tool_calls)
@@ -161,6 +221,8 @@ class TeachingAgent:
                 self._write_debug_event(
                     "unknown_tool_call",
                     {
+                        "session_id": self.session_id,
+                        "turn_id": turn_id,
                         "message": message,
                         "unknown_tool_name": unknown_tool_name,
                         "retry_count": hallucination_retries,
@@ -202,6 +264,14 @@ class TeachingAgent:
             for tool_call in tool_calls:
                 event = self.registry.execute_tool_call(tool_call)
                 tool_events.append(event)
+                self._write_debug_event(
+                    "tool_execution",
+                    {
+                        "session_id": self.session_id,
+                        "turn_id": turn_id,
+                        "tool": self._serialize_tool_event(event),
+                    },
+                )
                 tool_message = {"role": "tool", "name": event.name, "content": event.result}
                 self.messages.append(tool_message)
                 turn_messages.append(tool_message)
@@ -225,6 +295,28 @@ class TeachingAgent:
         with log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False, default=str))
             handle.write("\n")
+
+    @staticmethod
+    def _serialize_rag_hit(hit: RagSearchHit) -> dict[str, Any]:
+        return {
+            "score": hit.score,
+            "citation": hit.citation,
+            "source_path": hit.source_path,
+            "heading": hit.heading,
+            "heading_line": hit.heading_line,
+            "line_start": hit.line_start,
+            "line_end": hit.line_end,
+            "excerpt": hit.excerpt,
+            "text": hit.text,
+        }
+
+    @staticmethod
+    def _serialize_tool_event(event: ToolExecution) -> dict[str, Any]:
+        return {
+            "name": event.name,
+            "arguments": event.arguments,
+            "result": event.result,
+        }
 
     @staticmethod
     def _looks_like_fake_tool_call(message: dict[str, Any]) -> bool:

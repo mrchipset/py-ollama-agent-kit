@@ -44,6 +44,17 @@
       "envFile": "${workspaceFolder}/.env",
       "console": "integratedTerminal",
       "justMyCode": true
+      },
+      {
+        "name": "Python: Ollama Agent Session Export",
+        "type": "debugpy",
+        "request": "launch",
+        "module": "ollama_agent_kit",
+        "args": ["session", "export", "logs/ollama-debug.jsonl", "exports/session-export.md"],
+        "cwd": "${workspaceFolder}",
+        "envFile": "${workspaceFolder}/.env",
+        "console": "integratedTerminal",
+        "justMyCode": true
     }
   ]
 }

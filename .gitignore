@@ -8,3 +8,4 @@ dist/
 build/
 *.egg-info/
 logs/ollama-debug.jsonl
+exports/session-export.md

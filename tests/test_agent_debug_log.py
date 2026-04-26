@@ -35,15 +35,20 @@ def test_run_turn_writes_debug_log(tmp_path: Path) -> None:
 
     assert turn.reply == "hello"
     lines = log_path.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 3
+    assert len(lines) == 4
 
     first = json.loads(lines[0])
     second = json.loads(lines[1])
     third = json.loads(lines[2])
+    fourth = json.loads(lines[3])
 
     assert first["event"] == "user_input"
     assert first["payload"]["user_input"] == "Say hello"
+    assert isinstance(first["payload"]["session_id"], str)
+    assert first["payload"]["turn_id"] == 1
     assert second["event"] == "ollama_request"
     assert second["payload"]["model"] == agent.settings.ollama_model
     assert third["event"] == "ollama_response"
     assert third["payload"]["message"]["content"] == "hello"
+    assert fourth["event"] == "turn_complete"
+    assert fourth["payload"]["reply"] == "hello"

@@ -14,11 +14,14 @@ from .agent import TeachingAgent
 from .config import get_settings
 from .ollama_client import OllamaAPIError, OllamaClient
 from .rag import MarkdownRagStore
+from .session_export import export_session_log
 
 app = typer.Typer(add_completion=False, help="Teaching-oriented Ollama agent CLI.")
 rag_app = typer.Typer(add_completion=False, help="Markdown RAG knowledge base commands.")
+session_app = typer.Typer(add_completion=False, help="Session export commands.")
 demo_app = typer.Typer(add_completion=False, help="Guided demo scenarios for teaching the agent.")
 app.add_typer(rag_app, name="rag")
+app.add_typer(session_app, name="session")
 app.add_typer(demo_app, name="demo")
 console = Console()
 
@@ -230,6 +233,22 @@ def _supports_stream_callback(agent: object) -> bool:
 
 def main() -> None:
     app()
+
+
+@session_app.command("export")
+def session_export(
+    log_path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, help="JSONL debug log to export."),
+    output_path: Path = typer.Argument(..., help="Destination file for the exported session."),
+    session_id: Optional[str] = typer.Option(None, help="Export only the session with this id."),
+    format: str = typer.Option("markdown", help="Output format: markdown or json."),
+) -> None:
+    try:
+        export_session_log(log_path, output_path, session_id=session_id, output_format=format)
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(f"Exported session from {log_path} to {output_path}.")
 
 
 @demo_app.command("python")
