@@ -75,6 +75,42 @@ You can disable automatic RAG injection when you want a pure chat session:
 ollama-agent chat --no-rag
 ```
 
+The low-level client also supports multimodal chat requests. Pass base64 strings,
+raw bytes, or `Path` objects through the `images` argument and the client will
+attach them to the last user message:
+
+```python
+from pathlib import Path
+
+from ollama_agent_kit.ollama_client import OllamaClient
+
+client = OllamaClient("http://localhost:11434")
+response = client.chat(
+    model="llava",
+    messages=[{"role": "user", "content": "What is in this image?"}],
+    images=[Path("sample.png")],
+)
+```
+
+For the CLI chat loop, you can attach images to a turn in two ways:
+
+- one-shot: `ollama-agent chat --image sample.png "What is in this image?"`
+- interactive: type `:image sample.png -- What is in this image?`
+
+In both cases, the image is attached to that turn's user message and remains in the conversation history for later turns.
+
+If you are using the no-stream entry point and want to send an image in the current turn, the full command is:
+
+```bash
+ollama-agent chat --no-stream --image sample.png "What is in this image?"
+```
+
+If you are already inside the interactive no-stream session, you can make the current turn image-enabled by typing:
+
+```text
+:image sample.png -- What is in this image?
+```
+
 To run the guided Python tool demo directly:
 
 ```bash

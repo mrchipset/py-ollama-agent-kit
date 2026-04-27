@@ -125,6 +125,15 @@ def models() -> None:
 def chat(
     prompt: Optional[str] = typer.Argument(None, help="Optional one-shot prompt."),
     model: Optional[str] = typer.Option(None, help="Override the model name for this session."),
+    images: Optional[list[Path]] = typer.Option(
+        None,
+        "--image",
+        "-i",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="Attach one or more images to the next turn.",
+    ),
     tool_modules: Optional[str] = typer.Option(
         None,
         help="Comma-separated Python modules that expose build_tools() or TOOLS.",
@@ -165,17 +174,33 @@ def chat(
     )
 
     if prompt:
-        _run_single_turn(agent, prompt, stream=stream)
+        _run_single_turn(agent, prompt, stream=stream, images=images)
         return
 
     while True:
         user_input = Prompt.ask("You")
         if user_input.strip().lower() in {"quit", "exit", ":q"}:
             break
+        inline_images, inline_prompt = _parse_inline_image_turn(user_input)
+        if inline_images is not None:
+            if not inline_images:
+                image_input = Prompt.ask("Image paths")
+                inline_images = [Path(part) for part in _split_image_arguments(image_input)]
+            if not inline_prompt:
+                inline_prompt = Prompt.ask("Question")
+            _run_single_turn(agent, inline_prompt, stream=stream, images=inline_images)
+            continue
+
         _run_single_turn(agent, user_input, stream=stream)
 
 
-def _run_single_turn(agent: TeachingAgent, user_input: str, *, stream: bool = False) -> None:
+def _run_single_turn(
+    agent: TeachingAgent,
+    user_input: str,
+    *,
+    stream: bool = False,
+    images: Optional[list[Path]] = None,
+) -> None:
     streamed_reply: list[str] = []
     use_rag = stream and hasattr(agent, "should_use_rag") and agent.should_use_rag(user_input)
     rag_hits = agent._search_rag(user_input) if use_rag and hasattr(agent, "_search_rag") else None
@@ -195,9 +220,9 @@ def _run_single_turn(agent: TeachingAgent, user_input: str, *, stream: bool = Fa
 
     try:
         if stream and _supports_stream_callback(agent):
-            turn = agent.run_turn(user_input, rag_hits=rag_hits, on_text_chunk=on_text_chunk)
+            turn = _invoke_turn(agent, user_input, rag_hits=rag_hits, on_text_chunk=on_text_chunk, images=images)
         else:
-            turn = agent.run_turn(user_input)
+            turn = _invoke_turn(agent, user_input, images=images)
     except (OllamaAPIError, RuntimeError, KeyError, FileNotFoundError, ValueError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
@@ -229,6 +254,81 @@ def _supports_stream_callback(agent: object) -> bool:
         return False
 
     return "on_text_chunk" in signature.parameters
+
+
+def _supports_image_callback(agent: object) -> bool:
+    try:
+        signature = inspect.signature(agent.run_turn)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+    return "images" in signature.parameters
+
+
+def _invoke_turn(
+    agent: TeachingAgent,
+    user_input: str,
+    *,
+    rag_hits=None,
+    on_text_chunk=None,
+    images: Optional[list[Path]] = None,
+):
+    if images is not None and not _supports_image_callback(agent):
+        raise RuntimeError("This agent does not support image attachments.")
+
+    kwargs = {}
+    if rag_hits is not None:
+        kwargs["rag_hits"] = rag_hits
+    if on_text_chunk is not None:
+        kwargs["on_text_chunk"] = on_text_chunk
+    if images is not None:
+        kwargs["images"] = images
+
+    return agent.run_turn(user_input, **kwargs)
+
+
+def _parse_inline_image_turn(user_input: str) -> tuple[list[Path] | None, str]:
+    stripped = user_input.strip()
+    if not stripped.startswith((":image", "/image")):
+        return None, user_input
+
+    remainder = stripped.split(None, 1)
+    if len(remainder) == 1:
+        return [], ""
+
+    payload = remainder[1]
+    if " -- " in payload:
+        image_part, prompt = payload.split(" -- ", 1)
+    else:
+        image_part, prompt = payload, ""
+
+    return [Path(part) for part in _split_image_arguments(image_part)], prompt.strip()
+
+
+def _split_image_arguments(image_input: str) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+    quote_char: str | None = None
+
+    for character in image_input.strip():
+        if character in {'"', "'"}:
+            if quote_char is None:
+                quote_char = character
+                continue
+            if quote_char == character:
+                quote_char = None
+                continue
+        if character.isspace() and quote_char is None:
+            if current:
+                parts.append("".join(current))
+                current = []
+            continue
+        current.append(character)
+
+    if current:
+        parts.append("".join(current))
+
+    return parts
 
 
 def main() -> None:

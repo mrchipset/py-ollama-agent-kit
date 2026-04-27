@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -49,14 +50,16 @@ class TeachingAgent:
         user_input: str,
         *,
         rag_hits: list[RagSearchHit] | None = None,
+        images: list[str | bytes | Path] | None = None,
         on_text_chunk: Callable[[str], None] | None = None,
     ) -> AgentTurn:
         self.turn_counter += 1
         turn_id = self.turn_counter
         turn_messages = self._build_turn_messages()
         turn_messages.append({"role": "system", "content": self.settings.task_execution_prompt})
-        turn_messages.append({"role": "user", "content": user_input})
-        self.messages.append({"role": "user", "content": user_input})
+        user_message = self._build_user_message(user_input, images=images)
+        turn_messages.append(user_message)
+        self.messages.append(user_message)
 
         if rag_hits is None and self.should_use_rag(user_input):
             rag_hits = self._search_rag(user_input)
@@ -71,6 +74,7 @@ class TeachingAgent:
                 "session_id": self.session_id,
                 "turn_id": turn_id,
                 "user_input": user_input,
+                "image_count": len(images or []),
                 "rag_hit_count": len(rag_hits),
                 "rag_hits": [self._serialize_rag_hit(hit) for hit in rag_hits],
             },
@@ -79,9 +83,10 @@ class TeachingAgent:
         hallucination_retries = 0
 
         for _ in range(self.max_tool_rounds):
+            debug_messages = self._redact_images(turn_messages)
             request_body = {
                 "model": self.settings.ollama_model,
-                "messages": turn_messages,
+                "messages": debug_messages,
                 "tools": self.registry.schemas(),
             }
             self._write_debug_event("ollama_request", {"session_id": self.session_id, "turn_id": turn_id, **request_body})
@@ -304,6 +309,34 @@ class TeachingAgent:
             "role": "system",
             "content": f"{SUMMARY_PREFIX}:\n{self.conversation_summary}",
         }
+
+    @staticmethod
+    def _build_user_message(user_input: str, *, images: list[str | bytes | Path] | None = None) -> dict[str, Any]:
+        message: dict[str, Any] = {"role": "user", "content": user_input}
+        if images:
+            message["images"] = [TeachingAgent._encode_image(image) for image in images]
+        return message
+
+    @staticmethod
+    def _encode_image(image: str | bytes | Path) -> str:
+        if isinstance(image, Path):
+            return base64.b64encode(image.read_bytes()).decode("utf-8")
+
+        if isinstance(image, (bytes, bytearray)):
+            return base64.b64encode(bytes(image)).decode("utf-8")
+
+        return image
+
+    @staticmethod
+    def _redact_images(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        redacted_messages: list[dict[str, Any]] = []
+        for message in messages:
+            copy = dict(message)
+            images = copy.get("images")
+            if isinstance(images, list):
+                copy["images"] = ["<image>" for _ in images]
+            redacted_messages.append(copy)
+        return redacted_messages
 
     def _write_debug_event(self, event: str, payload: dict[str, Any]) -> None:
         if not self.settings.debug_log_path:

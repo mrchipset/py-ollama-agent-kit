@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from pathlib import Path
 
 from typer.testing import CliRunner
 
@@ -113,3 +114,62 @@ def test_chat_command_passes_custom_tool_options(monkeypatch) -> None:
     assert captured["tool_modules"] == "demo_tools"
     assert captured["tool_mode"] == "builtin+custom"
     assert captured["tool_registry_strict"] is False
+
+
+def test_chat_command_passes_image_option(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+    image_path = tmp_path / "sample.png"
+    image_path.write_bytes(b"image-bytes")
+
+    def fake_build_agent(model=None, **kwargs):
+        return SimpleNamespace(
+            settings=SimpleNamespace(rag_auto_enabled=True, ollama_host="http://127.0.0.1:11434", ollama_model="llama3.2"),
+            rag_store=object(),
+            should_use_rag=lambda user_input: False,
+            _search_rag=lambda user_input: [],
+            run_turn=lambda user_input, rag_hits=None, on_text_chunk=None, images=None: (
+                captured.update({"user_input": user_input, "images": images})
+                or AgentTurn(reply="ok", tool_events=[])
+            ),
+        )
+
+    monkeypatch.setattr("ollama_agent_kit.cli._build_agent", fake_build_agent)
+
+    result = CliRunner().invoke(
+        app,
+        ["chat", "hello", "--no-rag", "--image", str(image_path)],
+    )
+
+    assert result.exit_code == 0
+    assert captured["user_input"] == "hello"
+    assert captured["images"] == [image_path]
+
+
+def test_chat_command_parses_inline_image_turn(monkeypatch, tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+    image_path = tmp_path / "sample.png"
+    image_path.write_bytes(b"image-bytes")
+
+    def fake_build_agent(model=None, **kwargs):
+        return SimpleNamespace(
+            settings=SimpleNamespace(rag_auto_enabled=True, ollama_host="http://127.0.0.1:11434", ollama_model="llama3.2"),
+            rag_store=object(),
+            should_use_rag=lambda user_input: False,
+            _search_rag=lambda user_input: [],
+            run_turn=lambda user_input, rag_hits=None, on_text_chunk=None, images=None: (
+                calls.append({"user_input": user_input, "images": images})
+                or AgentTurn(reply="ok", tool_events=[])
+            ),
+        )
+
+    monkeypatch.setattr("ollama_agent_kit.cli._build_agent", fake_build_agent)
+
+    result = CliRunner().invoke(
+        app,
+        ["chat", "--no-rag"],
+        input=f":image {image_path} -- 这张图里有什么？\nexit\n",
+    )
+
+    assert result.exit_code == 0
+    assert calls[0]["user_input"] == "这张图里有什么？"
+    assert calls[0]["images"] == [image_path]

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ollama_agent_kit.agent import TeachingAgent
 from ollama_agent_kit.config import Settings
@@ -50,3 +52,25 @@ def test_agent_trims_history_to_configured_window() -> None:
     assert any(message.get("content") == "Question 3" for message in third_call_messages)
     assert all(message.get("content") != "Question 1" for message in third_call_messages)
     assert all(message.get("content") != "reply 1" for message in third_call_messages)
+
+
+def test_agent_preserves_image_messages_across_turns(tmp_path: Path) -> None:
+    client = _EchoClient()
+    agent = TeachingAgent(settings=Settings(), client=client)
+
+    image_path = tmp_path / "sample.png"
+    image_path.write_bytes(b"image-bytes")
+
+    first_turn = agent.run_turn("Look at this image", images=[image_path])
+    second_turn = agent.run_turn("What about the previous image?")
+
+    encoded_image = base64.b64encode(b"image-bytes").decode("utf-8")
+
+    assert first_turn.reply == "reply 1"
+    assert second_turn.reply == "reply 2"
+    assert client.calls[0]["messages"][-1]["images"] == [encoded_image]
+    assert any(
+        message.get("role") == "user" and message.get("images") == [encoded_image]
+        for message in client.calls[1]["messages"]
+    )
+    assert client.calls[1]["messages"][-1]["content"] == "What about the previous image?"

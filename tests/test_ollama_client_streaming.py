@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 
@@ -28,6 +29,17 @@ class _FakeStreamContext:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         return None
+
+
+@dataclass
+class _FakeJSONResponse:
+    payload: dict
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return self.payload
 
 
 def test_stream_chat_yields_ndjson_chunks(monkeypatch) -> None:
@@ -75,3 +87,55 @@ def test_stream_chat_raises_on_http_error(monkeypatch) -> None:
         list(client.stream_chat(model="demo", messages=[]))
     except Exception as exc:
         assert "Ollama request failed" in str(exc)
+
+
+def test_chat_with_images_attaches_base64_image_to_last_user_message(monkeypatch, tmp_path: Path) -> None:
+    client = OllamaClient("http://127.0.0.1:11434")
+    captured_bodies: list[dict] = []
+
+    image_path = tmp_path / "sample.bin"
+    image_path.write_bytes(b"image-bytes")
+
+    def fake_request(method, path, **kwargs):
+        captured_bodies.append(kwargs["json"])
+        return _FakeJSONResponse({"message": {"role": "assistant", "content": "ok"}})
+
+    monkeypatch.setattr(client._client, "request", fake_request)
+
+    client.chat(
+        model="demo",
+        messages=[
+            {"role": "system", "content": "keep context"},
+            {"role": "user", "content": "what is in this image?"},
+        ],
+        images=[image_path],
+    )
+
+    body = captured_bodies[0]
+    assert body["stream"] is False
+    assert body["messages"][-1]["images"] == ["aW1hZ2UtYnl0ZXM="]
+    assert body["messages"][0]["role"] == "system"
+
+
+def test_stream_chat_with_images_attaches_to_existing_user_message(monkeypatch) -> None:
+    client = OllamaClient("http://127.0.0.1:11434")
+    captured_bodies: list[dict] = []
+
+    def fake_stream(method, path, **kwargs):
+        captured_bodies.append(kwargs["json"])
+        response = _FakeStreamResponse(lines=['{"message": {"role": "assistant", "content": "done"}, "done": true}'])
+        return _FakeStreamContext(response)
+
+    monkeypatch.setattr(client._client, "stream", fake_stream)
+
+    list(
+        client.stream_chat(
+            model="demo",
+            messages=[{"role": "user", "content": "describe this"}],
+            images=[b"raw-bytes"],
+        )
+    )
+
+    body = captured_bodies[0]
+    assert body["stream"] is True
+    assert body["messages"][0]["images"] == ["cmF3LWJ5dGVz"]
