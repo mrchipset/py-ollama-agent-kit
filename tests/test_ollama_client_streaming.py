@@ -52,7 +52,7 @@ def test_stream_chat_yields_ndjson_chunks(monkeypatch) -> None:
             lines=[
                 '{"message": {"role": "assistant", "content": "Hel"}, "done": false}',
                 '{"message": {"role": "assistant", "content": "lo"}, "done": false}',
-                '{"message": {"role": "assistant", "content": ""}, "done": true}',
+                '{"message": {"role": "assistant", "content": ""}, "done": true, "eval_count": 7, "eval_duration": 1000000000}',
             ]
         )
         return _FakeStreamContext(response)
@@ -64,6 +64,8 @@ def test_stream_chat_yields_ndjson_chunks(monkeypatch) -> None:
     assert captured_bodies[0]["stream"] is True
     assert chunks[0]["message"]["content"] == "Hel"
     assert chunks[1]["message"]["content"] == "lo"
+    assert chunks[-1]["eval_count"] == 7
+    assert chunks[-1]["eval_duration"] == 1000000000
 
 
 def test_stream_chat_raises_on_http_error(monkeypatch) -> None:

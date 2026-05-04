@@ -3,7 +3,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from ollama_agent_kit.agent import AgentTurn
+from ollama_agent_kit.agent import AgentTurn, ResponseMetrics
 from ollama_agent_kit.cli import DEFAULT_PYTHON_DEMO_PROMPT, app
 from ollama_agent_kit.tools import ToolExecution
 
@@ -76,6 +76,25 @@ def test_run_single_turn_prints_tool_output_before_streamed_text(capsys) -> None
 
     output = capsys.readouterr().out
     assert output.index("tool") < output.index("Final answer.")
+
+
+def test_run_single_turn_prints_generation_rate_when_metrics_exist(capsys) -> None:
+    from ollama_agent_kit.cli import _run_single_turn
+
+    class _StreamingAgentWithMetrics:
+        def run_turn(self, user_input: str, *, rag_hits=None, on_text_chunk=None) -> AgentTurn:
+            if on_text_chunk is not None:
+                on_text_chunk("Final answer.")
+            return AgentTurn(
+                reply="Final answer.",
+                tool_events=[],
+                response_metrics=ResponseMetrics(eval_count=12, eval_duration=2_000_000_000),
+            )
+
+    _run_single_turn(_StreamingAgentWithMetrics(), "Use Python to add 1 and 2.", stream=True)
+
+    output = capsys.readouterr().out
+    assert "Generation speed: 6.00 token/s" in output
 
 
 def test_chat_command_passes_custom_tool_options(monkeypatch) -> None:

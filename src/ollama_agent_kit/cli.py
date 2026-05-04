@@ -10,7 +10,7 @@ from rich.markdown import Markdown
 from rich.prompt import Prompt
 from rich.table import Table
 
-from .agent import TeachingAgent
+from .agent import ResponseMetrics, TeachingAgent
 from .config import get_settings
 from .ollama_client import OllamaAPIError, OllamaClient
 from .rag import MarkdownRagStore
@@ -26,6 +26,16 @@ app.add_typer(demo_app, name="demo")
 console = Console()
 
 DEFAULT_PYTHON_DEMO_PROMPT = "Use Python to add 17 and 25, then show the result."
+
+
+def _format_generation_rate(metrics: ResponseMetrics) -> str | None:
+    if metrics.eval_count is None or metrics.eval_duration is None or metrics.eval_duration <= 0:
+        return None
+
+    tokens_per_second = metrics.eval_count / (metrics.eval_duration / 1_000_000_000)
+    return f"Generation speed: {tokens_per_second:.2f} token/s"
+
+
 def _apply_tool_settings(
     settings,
     *,
@@ -245,6 +255,10 @@ def _run_single_turn(
         console.print()
     else:
         console.print(Markdown(turn.reply))
+
+    generation_rate = _format_generation_rate(turn.response_metrics)
+    if generation_rate is not None:
+        console.print(f"[dim]{generation_rate}[/dim]")
 
 
 def _supports_stream_callback(agent: object) -> bool:

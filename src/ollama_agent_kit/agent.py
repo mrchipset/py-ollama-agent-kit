@@ -16,10 +16,20 @@ from .tools import ToolExecution, ToolRegistry, build_tool_registry
 
 
 @dataclass(slots=True)
+class ResponseMetrics:
+    eval_count: int | None = None
+    eval_duration: int | None = None
+    prompt_eval_count: int | None = None
+    prompt_eval_duration: int | None = None
+    total_duration: int | None = None
+
+
+@dataclass(slots=True)
 class AgentTurn:
     reply: str
     tool_events: list[ToolExecution]
     rag_hits: list[RagSearchHit] = field(default_factory=list)
+    response_metrics: ResponseMetrics = field(default_factory=ResponseMetrics)
 
 
 @dataclass(slots=True)
@@ -93,6 +103,7 @@ class TeachingAgent:
             response = self._chat_response(turn_messages, on_text_chunk=on_text_chunk)
             self._write_debug_event("ollama_response", {"session_id": self.session_id, "turn_id": turn_id, **response})
             message = response.get("message", {})
+            response_metrics = self._extract_response_metrics(response)
 
             if self._looks_like_fake_tool_call(message):
                 hallucination_retries += 1
@@ -146,6 +157,7 @@ class TeachingAgent:
                         reply=reply,
                         tool_events=tool_events,
                         rag_hits=rag_hits,
+                        response_metrics=response_metrics,
                     )
 
                 self._write_debug_event(
@@ -158,18 +170,20 @@ class TeachingAgent:
                     },
                 )
 
-                retry_reply = self._retry_empty_response(
+                retry_result = self._retry_empty_response(
                     user_input,
                     rag_hits,
                     on_text_chunk=on_text_chunk,
                 )
-                if retry_reply:
+                if retry_result:
+                    retry_reply, retry_metrics = retry_result
                     self.messages[-1] = {"role": "assistant", "content": retry_reply}
                     return self._finish_turn(
                         turn_id,
                         reply=retry_reply,
                         tool_events=tool_events,
                         rag_hits=rag_hits,
+                        response_metrics=retry_metrics,
                         recovery_note="empty_assistant_response",
                     )
 
@@ -183,6 +197,7 @@ class TeachingAgent:
                         reply=fallback_reply,
                         tool_events=tool_events,
                         rag_hits=rag_hits,
+                        response_metrics=response_metrics,
                         recovery_note="rag_fallback",
                     )
 
@@ -195,6 +210,7 @@ class TeachingAgent:
                     reply=fallback_reply,
                     tool_events=tool_events,
                     rag_hits=rag_hits,
+                    response_metrics=response_metrics,
                     recovery_note="empty_response_fallback",
                 )
 
@@ -268,6 +284,7 @@ class TeachingAgent:
         reply: str,
         tool_events: list[ToolExecution],
         rag_hits: list[RagSearchHit],
+        response_metrics: ResponseMetrics,
         recovery_note: str | None = None,
     ) -> AgentTurn:
         payload: dict[str, Any] = {
@@ -277,6 +294,7 @@ class TeachingAgent:
             "reply": reply,
             "tool_events": [self._serialize_tool_event(event) for event in tool_events],
             "rag_hits": [self._serialize_rag_hit(hit) for hit in rag_hits],
+            "response_metrics": self._serialize_response_metrics(response_metrics),
         }
         if recovery_note is not None:
             payload["recovered_from"] = recovery_note
@@ -291,7 +309,12 @@ class TeachingAgent:
             )
         else:
             self.messages = compact_messages(self.messages, max_messages=self.settings.context_max_messages)
-        return AgentTurn(reply=reply, tool_events=tool_events, rag_hits=rag_hits)
+        return AgentTurn(
+            reply=reply,
+            tool_events=tool_events,
+            rag_hits=rag_hits,
+            response_metrics=response_metrics,
+        )
 
     def _build_turn_messages(self) -> list[dict[str, Any]]:
         turn_messages = list(self.messages)
@@ -497,7 +520,7 @@ class TeachingAgent:
         rag_hits: list[RagSearchHit],
         *,
         on_text_chunk: Callable[[str], None] | None = None,
-    ) -> str | None:
+    ) -> tuple[str, ResponseMetrics] | None:
         retry_messages = list(self.messages[:-1])
         retry_messages.append(
             {
@@ -543,7 +566,42 @@ class TeachingAgent:
         message = response.get("message", {})
         reply = (message.get("content") or "").strip()
         if reply:
-            return reply
+            return reply, self._extract_response_metrics(response)
+        return None
+
+    @staticmethod
+    def _extract_response_metrics(response: dict[str, Any]) -> ResponseMetrics:
+        return ResponseMetrics(
+            eval_count=TeachingAgent._coerce_optional_int(response.get("eval_count")),
+            eval_duration=TeachingAgent._coerce_optional_int(response.get("eval_duration")),
+            prompt_eval_count=TeachingAgent._coerce_optional_int(response.get("prompt_eval_count")),
+            prompt_eval_duration=TeachingAgent._coerce_optional_int(response.get("prompt_eval_duration")),
+            total_duration=TeachingAgent._coerce_optional_int(response.get("total_duration")),
+        )
+
+    @staticmethod
+    def _serialize_response_metrics(metrics: ResponseMetrics) -> dict[str, int]:
+        payload: dict[str, int] = {}
+        for key in (
+            "eval_count",
+            "eval_duration",
+            "prompt_eval_count",
+            "prompt_eval_duration",
+            "total_duration",
+        ):
+            value = getattr(metrics, key)
+            if value is not None:
+                payload[key] = value
+        return payload
+
+    @staticmethod
+    def _coerce_optional_int(value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
         return None
 
     def _chat_response(
