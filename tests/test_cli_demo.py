@@ -100,11 +100,12 @@ def test_run_single_turn_prints_generation_rate_when_metrics_exist(capsys) -> No
 def test_chat_command_passes_custom_tool_options(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_build_agent(model=None, *, tool_modules=None, tool_mode=None, tool_registry_strict=None):
+    def fake_build_agent(model=None, *, tool_modules=None, tool_mode=None, tool_registry_strict=None, mcp_servers=None):
         captured["model"] = model
         captured["tool_modules"] = tool_modules
         captured["tool_mode"] = tool_mode
         captured["tool_registry_strict"] = tool_registry_strict
+        captured["mcp_servers"] = mcp_servers
         return SimpleNamespace(
             settings=SimpleNamespace(rag_auto_enabled=True, ollama_host="http://127.0.0.1:11434", ollama_model="llama3.2"),
             rag_store=object(),
@@ -123,16 +124,19 @@ def test_chat_command_passes_custom_tool_options(monkeypatch) -> None:
             "--tool-modules",
             "demo_tools",
             "--tool-mode",
-            "builtin+custom",
+            "builtin+custom+mcp",
             "--no-strict-tools",
+            "--mcp-servers",
+            '{"docs":{"command":"fake-mcp","args":[]}}',
             "--no-rag",
         ],
     )
 
     assert result.exit_code == 0
     assert captured["tool_modules"] == "demo_tools"
-    assert captured["tool_mode"] == "builtin+custom"
+    assert captured["tool_mode"] == "builtin+custom+mcp"
     assert captured["tool_registry_strict"] is False
+    assert captured["mcp_servers"] == '{"docs":{"command":"fake-mcp","args":[]}}'
 
 
 def test_chat_command_passes_image_option(monkeypatch, tmp_path: Path) -> None:

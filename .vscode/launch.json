@@ -34,6 +34,26 @@
       "console": "integratedTerminal",
       "justMyCode": true
     },
+    {
+      "name": "Python: Ollama Agent Chat with Test MCP",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "ollama_agent_kit",
+      "args": [
+        "chat",
+         "--no-rag",
+        "--stream",
+        "--tool-mode",
+        "builtin+mcp"
+      ],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "OLLAMA_MCP_SERVERS": "{\"test\":{\"command\":\"${workspaceFolder}/.venv/Scripts/python.exe\",\"args\":[\"-m\",\"ollama_agent_kit.mcp_test_server\"]}}"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
       {
       "name": "Python: Ollama Agent Chat No Rag No Stream",
       "type": "debugpy",

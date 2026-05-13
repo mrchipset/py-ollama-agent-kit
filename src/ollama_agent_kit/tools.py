@@ -13,6 +13,7 @@ from types import ModuleType
 from typing import Any, Callable, Protocol
 
 from .config import ROOT_DIR, Settings
+from .mcp import McpServerConfig, StdioMcpClient, parse_mcp_server_configs
 
 ToolHandler = Callable[[dict[str, Any]], str]
 
@@ -346,9 +347,10 @@ def build_tool_registry(
     root = (workspace_root or ROOT_DIR).resolve()
     active_settings = settings or Settings()
 
-    registry_mode = active_settings.tool_mode.strip().lower()
-    builtin_enabled = registry_mode in {"builtin", "builtin+custom", "default", ""}
-    custom_enabled = include_custom and registry_mode in {"builtin+custom", "custom-only"}
+    enabled_sources = _parse_tool_mode(active_settings.tool_mode)
+    builtin_enabled = "builtin" in enabled_sources
+    custom_enabled = include_custom and "custom" in enabled_sources
+    mcp_enabled = "mcp" in enabled_sources
 
     builtin_tools = _build_builtin_tools(root=root, active_settings=active_settings) if builtin_enabled else []
     registry = ToolRegistry(builtin_tools)
@@ -356,10 +358,31 @@ def build_tool_registry(
     if custom_enabled:
         registry.extend(load_custom_tools(active_settings), strict=active_settings.tool_registry_strict)
 
+    if mcp_enabled:
+        registry.extend(load_mcp_tools(active_settings), strict=active_settings.tool_registry_strict)
+
     if extra_tools:
         registry.extend(extra_tools, strict=True)
 
     return registry
+
+
+def _parse_tool_mode(raw_mode: str) -> set[str]:
+    normalized = raw_mode.strip().lower()
+    if normalized in {"", "default"}:
+        return {"builtin"}
+    if normalized.endswith("-only"):
+        normalized = normalized[:-5]
+
+    enabled_sources = {part.strip() for part in normalized.split("+") if part.strip()}
+    valid_sources = {"builtin", "custom", "mcp"}
+    invalid_sources = enabled_sources - valid_sources
+    if invalid_sources:
+        invalid_text = ", ".join(sorted(invalid_sources))
+        raise ValueError(f"Unsupported tool mode source: {invalid_text}")
+    if not enabled_sources:
+        raise ValueError("Tool mode did not enable any tool sources")
+    return enabled_sources
 
 
 def load_custom_tools(settings: Settings) -> list[ToolDefinition]:
@@ -372,6 +395,63 @@ def load_custom_tools(settings: Settings) -> list[ToolDefinition]:
         module = importlib.import_module(module_name)
         tools.extend(_extract_tools_from_module(module))
     return tools
+
+
+def load_mcp_tools(
+    settings: Settings,
+    *,
+    client_factory: Callable[[McpServerConfig, float], Any] | None = None,
+) -> list[ToolDefinition]:
+    server_configs = parse_mcp_server_configs(settings.mcp_servers)
+    if not server_configs:
+        return []
+
+    factory = client_factory or (lambda config, timeout_seconds: StdioMcpClient(config, timeout_seconds=timeout_seconds))
+    tools: list[ToolDefinition] = []
+
+    for server_config in server_configs:
+        client = factory(server_config, float(settings.mcp_timeout_seconds))
+        for tool in client.list_tools():
+            tools.append(_build_mcp_tool_definition(server_config.name, tool, client))
+
+    return tools
+
+
+def _build_mcp_tool_definition(server_name: str, tool_payload: dict[str, Any], client: Any) -> ToolDefinition:
+    tool_name = tool_payload.get("name")
+    description = tool_payload.get("description") or f"Proxy tool from MCP server {server_name}."
+    input_schema = tool_payload.get("inputSchema") or {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    }
+
+    if not isinstance(tool_name, str) or not tool_name.strip():
+        raise ValueError(f"MCP server {server_name!r} returned a tool without a valid name")
+    if not isinstance(input_schema, dict):
+        raise ValueError(f"MCP server {server_name!r} returned an invalid schema for tool {tool_name!r}")
+
+    registry_name = f"{server_name}__{tool_name}"
+
+    def call_mcp_tool(arguments: dict[str, Any]) -> str:
+        result = client.call_tool(tool_name, arguments)
+        return _serialize_mcp_tool_result(result)
+
+    return ToolDefinition(
+        name=registry_name,
+        description=f"[{server_name}] {description}",
+        parameters=input_schema,
+        handler=call_mcp_tool,
+    )
+
+
+def _serialize_mcp_tool_result(result: dict[str, Any]) -> str:
+    content = result.get("content")
+    if isinstance(content, list):
+        text_chunks = [item.get("text") for item in content if isinstance(item, dict) and item.get("type") == "text"]
+        if text_chunks and len(text_chunks) == len(content):
+            return "\n".join(text_chunks)
+    return json.dumps(result, ensure_ascii=False)
 
 
 def _extract_tools_from_module(module: ModuleType) -> list[ToolDefinition]:

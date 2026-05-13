@@ -2,6 +2,12 @@
 
 This workspace contains a teaching-oriented Python agent that talks to Ollama, can execute local tools, and exposes a simple CLI chat loop.
 
+The tool system now supports three sources at the same time:
+
+- built-in tools shipped with this repository
+- custom Python modules that return `ToolDefinition` objects
+- MCP tools discovered from stdio MCP servers
+
 ## Project layout
 
 ```text
@@ -16,6 +22,8 @@ This workspace contains a teaching-oriented Python agent that talks to Ollama, c
 |       |-- agent.py
 |       |-- cli.py
 |       |-- config.py
+|       |-- mcp.py
+|       |-- mcp_test_server.py
 |       |-- ollama_client.py
 |       |-- rag.py
 |       `-- tools.py
@@ -56,17 +64,84 @@ Tool registration can also be configured through `.env`:
 
 - `OLLAMA_TOOL_MODE=builtin` keeps only the built-in tools.
 - `OLLAMA_TOOL_MODE=builtin+custom` loads built-in tools and any modules listed in `OLLAMA_TOOL_MODULES`.
+- `OLLAMA_TOOL_MODE=builtin+mcp` loads built-in tools and any MCP servers listed in `OLLAMA_MCP_SERVERS`.
+- `OLLAMA_TOOL_MODE=builtin+custom+mcp` loads all three sources together.
 - `OLLAMA_TOOL_MODE=custom-only` loads only custom tools from `OLLAMA_TOOL_MODULES`.
+- `OLLAMA_TOOL_MODE=mcp-only` loads only MCP tools from `OLLAMA_MCP_SERVERS`.
 - `OLLAMA_TOOL_MODULES=my_tools,other_tools` points to Python modules that expose `build_tools()`, `get_tools()`, or a `TOOLS` collection.
+- `OLLAMA_MCP_SERVERS={"docs":{"command":"python","args":["-m","my_mcp_server"]}}` registers stdio MCP servers. Tools are exposed as `server__tool_name` to avoid collisions.
+- `OLLAMA_MCP_TIMEOUT_SECONDS=15` controls how long the MCP client waits for a response before failing the request.
 - `OLLAMA_TOOL_REGISTRY_STRICT=true` fails on duplicate tool names instead of skipping them.
 - A minimal working example lives in [examples/custom_tools.py](examples/custom_tools.py).
 
 Example:
 
 ```bash
-OLLAMA_TOOL_MODE=builtin+custom
+OLLAMA_TOOL_MODE=builtin+custom+mcp
 OLLAMA_TOOL_MODULES=my_project.tools
+OLLAMA_MCP_SERVERS={"docs":{"command":"python","args":["-m","my_project.mcp_server"]}}
+OLLAMA_MCP_TIMEOUT_SECONDS=15
 OLLAMA_TOOL_REGISTRY_STRICT=true
+```
+
+## MCP Usage
+
+The current MCP integration uses stdio transport only. At startup, the agent:
+
+1. parses `OLLAMA_MCP_SERVERS`
+2. launches each configured MCP server as a subprocess
+3. sends `initialize`
+4. fetches `tools/list`
+5. registers each remote MCP tool in the local `ToolRegistry`
+
+Tool names are prefixed as `server__tool_name`. For example, if the MCP server is named `docs` and exposes a tool named `search`, the agent registers `docs__search`.
+
+This prefixing is intentional. It avoids collisions with built-in tools and custom Python tools.
+
+For local MCP testing in this repository, a minimal stdio server is included and can be started with:
+
+```bash
+python -m ollama_agent_kit.mcp_test_server
+```
+
+You can wire it into chat like this:
+
+```bash
+ollama-agent chat --tool-mode mcp-only --mcp-servers '{"test":{"command":"python","args":["-m","ollama_agent_kit.mcp_test_server"]}}'
+```
+
+The test server currently exposes:
+
+- `test__echo_text`
+- `test__sum_numbers`
+
+Example prompt:
+
+```text
+Please call the MCP tool echo_text with "hello from mcp", then call sum_numbers with 17 and 25, and finally explain which tools you used.
+```
+
+### VS Code Launch
+
+The workspace includes a ready-to-run launch configuration for MCP testing in [.vscode/launch.json](c:/Users/Zouyu/repos/py-ollama-agent-kit/.vscode/launch.json):
+
+- `Python: Ollama Agent Chat with Test MCP`
+
+That launch configuration starts chat with `builtin+mcp`, disables RAG for a cleaner MCP demo, and injects `OLLAMA_MCP_SERVERS` through the debug environment.
+
+### Windows Note
+
+On Windows PowerShell, passing JSON directly through `--mcp-servers` is easy to get wrong because shell parsing rewrites quotes before Python receives the argument. If you see `OLLAMA_MCP_SERVERS must be valid JSON`, prefer one of these approaches:
+
+- put `OLLAMA_MCP_SERVERS` in `.env`
+- set `OLLAMA_MCP_SERVERS` in the launch configuration `env`
+- set the environment variable in PowerShell before starting the program
+
+Example:
+
+```powershell
+$env:OLLAMA_MCP_SERVERS = '{"test":{"command":"c:/Users/Zouyu/repos/py-ollama-agent-kit/.venv/Scripts/python.exe","args":["-m","ollama_agent_kit.mcp_test_server"]}}'
+c:/Users/Zouyu/repos/py-ollama-agent-kit/.venv/Scripts/python.exe -m ollama_agent_kit chat --stream --tool-mode builtin+mcp
 ```
 
 You can disable automatic RAG injection when you want a pure chat session:
@@ -125,6 +200,8 @@ ollama-agent demo python
 - 受控 Python 执行工具
 - 多轮工具调用与任务执行提示
 - 自定义工具注册机制
+- MCP stdio tool 接入
+- MCP 测试服务器与调试配置
 - `.env` 中的 tool 相关配置
 - 最小自定义工具示例
 
@@ -158,6 +235,7 @@ The first version only supports local Markdown files, explicit file adds, and re
 - Plain HTTP calls to the Ollama chat API
 - Tool schema registration
 - Tool-call execution loop
+- MCP stdio server discovery and execution
 - Interactive CLI chat for teaching and debugging
 - Optional JSONL debug logging of requests and responses
 - Markdown retrieval with explicit add/search/clear commands
@@ -174,3 +252,10 @@ The first version only supports local Markdown files, explicit file adds, and re
 
 The file tools are limited to the current workspace root.
 The Python execution tool is intentionally constrained: it runs in a subprocess, enforces a timeout, limits output, and only allows a small import allowlist for teaching demos.
+
+## MCP Implementation Notes
+
+- MCP transport support is currently stdio only.
+- The MCP client lives in [src/ollama_agent_kit/mcp.py](c:/Users/Zouyu/repos/py-ollama-agent-kit/src/ollama_agent_kit/mcp.py).
+- The sample test server lives in [src/ollama_agent_kit/mcp_test_server.py](c:/Users/Zouyu/repos/py-ollama-agent-kit/src/ollama_agent_kit/mcp_test_server.py).
+- Registry composition still flows through [src/ollama_agent_kit/tools.py](c:/Users/Zouyu/repos/py-ollama-agent-kit/src/ollama_agent_kit/tools.py), so built-in, custom, and MCP tools all share the same execution loop.

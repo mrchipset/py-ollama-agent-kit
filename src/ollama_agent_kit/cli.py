@@ -42,6 +42,7 @@ def _apply_tool_settings(
     tool_modules: str | None = None,
     tool_mode: str | None = None,
     tool_registry_strict: bool | None = None,
+    mcp_servers: str | None = None,
 ) -> None:
     if tool_modules is not None:
         settings.tool_modules = tool_modules
@@ -49,6 +50,8 @@ def _apply_tool_settings(
         settings.tool_mode = tool_mode
     if tool_registry_strict is not None:
         settings.tool_registry_strict = tool_registry_strict
+    if mcp_servers is not None:
+        settings.mcp_servers = mcp_servers
 
 
 def _build_agent(
@@ -57,6 +60,7 @@ def _build_agent(
     tool_modules: str | None = None,
     tool_mode: str | None = None,
     tool_registry_strict: bool | None = None,
+    mcp_servers: str | None = None,
 ) -> TeachingAgent:
     settings = get_settings()
     if model:
@@ -66,6 +70,7 @@ def _build_agent(
         tool_modules=tool_modules,
         tool_mode=tool_mode,
         tool_registry_strict=tool_registry_strict,
+        mcp_servers=mcp_servers,
     )
     return TeachingAgent(settings=settings)
 
@@ -150,12 +155,16 @@ def chat(
     ),
     tool_mode: Optional[str] = typer.Option(
         None,
-        help="Tool registry mode: builtin, builtin+custom, or custom-only.",
+        help="Tool registry mode: builtin, builtin+custom, builtin+mcp, builtin+custom+mcp, custom-only, or mcp-only.",
     ),
     tool_registry_strict: bool = typer.Option(
         True,
         "--strict-tools/--no-strict-tools",
         help="Fail on duplicate tool names instead of skipping them.",
+    ),
+    mcp_servers: Optional[str] = typer.Option(
+        None,
+        help="JSON object or array describing MCP stdio servers to load as tools.",
     ),
     rag: bool = typer.Option(True, "--rag/--no-rag", help="Enable or disable automatic Markdown RAG context injection."),
     stream: bool = typer.Option(
@@ -173,6 +182,7 @@ def chat(
         tool_modules=tool_modules,
         tool_mode=tool_mode,
         tool_registry_strict=tool_registry_strict,
+        mcp_servers=mcp_servers,
     )
     agent.settings.rag_auto_enabled = rag
     if not rag:

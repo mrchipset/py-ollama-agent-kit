@@ -45,6 +45,8 @@ class Settings:
         "no",
         "off",
     }
+    mcp_servers: str = os.getenv("OLLAMA_MCP_SERVERS", "")
+    mcp_timeout_seconds: float = float(os.getenv("OLLAMA_MCP_TIMEOUT_SECONDS", "15"))
     debug_log_path: str | None = os.getenv("OLLAMA_DEBUG_LOG_PATH") or None
     rag_auto_enabled: bool = os.getenv("RAG_AUTO_ENABLED", "true").lower() not in {"0", "false", "no", "off"}
     rag_index_path: str = os.getenv("RAG_INDEX_PATH", str(ROOT_DIR / "data" / "rag_index.json"))
