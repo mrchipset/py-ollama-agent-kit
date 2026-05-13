@@ -13,7 +13,7 @@ from types import ModuleType
 from typing import Any, Callable, Protocol
 
 from .config import ROOT_DIR, Settings
-from .mcp import McpServerConfig, StdioMcpClient, parse_mcp_server_configs
+from .mcp import McpServerConfig, build_mcp_client, parse_mcp_server_configs
 
 ToolHandler = Callable[[dict[str, Any]], str]
 
@@ -406,7 +406,7 @@ def load_mcp_tools(
     if not server_configs:
         return []
 
-    factory = client_factory or (lambda config, timeout_seconds: StdioMcpClient(config, timeout_seconds=timeout_seconds))
+    factory = client_factory or (lambda config, timeout_seconds: build_mcp_client(config, timeout_seconds=timeout_seconds))
     tools: list[ToolDefinition] = []
 
     for server_config in server_configs:

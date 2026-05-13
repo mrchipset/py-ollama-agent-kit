@@ -54,6 +54,26 @@
       "console": "integratedTerminal",
       "justMyCode": true
     },
+    {
+      "name": "Python: Ollama Agent Chat with Remote MCP",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "ollama_agent_kit",
+      "args": [
+        "chat",
+        "--no-rag",
+        "--stream",
+        "--tool-mode",
+        "builtin+mcp"
+      ],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "OLLAMA_MCP_SERVERS": "{\"remote\":{\"transport\":\"http\",\"url\":\"http://127.0.0.1:8080/mcp\",\"headers\":{\"Authorization\":\"Bearer demo-token\"}}}"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
       {
       "name": "Python: Ollama Agent Chat No Rag No Stream",
       "type": "debugpy",

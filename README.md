@@ -70,6 +70,7 @@ Tool registration can also be configured through `.env`:
 - `OLLAMA_TOOL_MODE=mcp-only` loads only MCP tools from `OLLAMA_MCP_SERVERS`.
 - `OLLAMA_TOOL_MODULES=my_tools,other_tools` points to Python modules that expose `build_tools()`, `get_tools()`, or a `TOOLS` collection.
 - `OLLAMA_MCP_SERVERS={"docs":{"command":"python","args":["-m","my_mcp_server"]}}` registers stdio MCP servers. Tools are exposed as `server__tool_name` to avoid collisions.
+- `OLLAMA_MCP_SERVERS={"docs":{"transport":"http","url":"http://127.0.0.1:8080/mcp"}}` registers a remote MCP server over HTTP.
 - `OLLAMA_MCP_TIMEOUT_SECONDS=15` controls how long the MCP client waits for a response before failing the request.
 - `OLLAMA_TOOL_REGISTRY_STRICT=true` fails on duplicate tool names instead of skipping them.
 - A minimal working example lives in [examples/custom_tools.py](examples/custom_tools.py).
@@ -86,13 +87,18 @@ OLLAMA_TOOL_REGISTRY_STRICT=true
 
 ## MCP Usage
 
-The current MCP integration uses stdio transport only. At startup, the agent:
+The current MCP integration supports two transport styles:
+
+- `stdio` for local subprocess MCP servers
+- `http` for remote MCP endpoints that accept JSON-RPC POST requests
+
+At startup, the agent:
 
 1. parses `OLLAMA_MCP_SERVERS`
-2. launches each configured MCP server as a subprocess
+2. connects to each configured MCP server over its declared transport
 3. sends `initialize`
 4. fetches `tools/list`
-5. registers each remote MCP tool in the local `ToolRegistry`
+5. registers each discovered MCP tool in the local `ToolRegistry`
 
 Tool names are prefixed as `server__tool_name`. For example, if the MCP server is named `docs` and exposes a tool named `search`, the agent registers `docs__search`.
 
@@ -110,15 +116,50 @@ You can wire it into chat like this:
 ollama-agent chat --tool-mode mcp-only --mcp-servers '{"test":{"command":"python","args":["-m","ollama_agent_kit.mcp_test_server"]}}'
 ```
 
+Example remote MCP configuration:
+
+```bash
+OLLAMA_TOOL_MODE=mcp-only
+OLLAMA_MCP_SERVERS={"remote-docs":{"transport":"http","url":"http://127.0.0.1:8080/mcp","headers":{"Authorization":"Bearer demo-token"}}}
+```
+
+For local remote-MCP testing in this repository, a simple HTTP MCP server is included and can be started with:
+
+```bash
+python -m ollama_agent_kit.remote_mcp_test_server --host 127.0.0.1 --port 8080 --token demo-token
+```
+
+Recommended startup flow:
+
+1. Start the remote HTTP MCP server in one terminal:
+
+```bash
+python -m ollama_agent_kit.remote_mcp_test_server --host 127.0.0.1 --port 8080 --token demo-token
+```
+
+2. Point the agent at that server through `.env`, a VS Code launch configuration, or a shell environment variable:
+
+```bash
+OLLAMA_MCP_SERVERS={"remote":{"transport":"http","url":"http://127.0.0.1:8080/mcp","headers":{"Authorization":"Bearer demo-token"}}}
+```
+
+3. Start chat with MCP enabled:
+
+```bash
+ollama-agent chat --no-rag --stream --tool-mode builtin+mcp
+```
+
+If you are using the included VS Code launch configuration, start the HTTP server first and then run `Python: Ollama Agent Chat with Remote MCP`.
+
 The test server currently exposes:
 
-- `test__echo_text`
-- `test__sum_numbers`
+- `remote__remote_echo`
+- `remote__remote_sum`
 
 Example prompt:
 
 ```text
-Please call the MCP tool echo_text with "hello from mcp", then call sum_numbers with 17 and 25, and finally explain which tools you used.
+Please call the MCP tool remote_echo with "hello from remote mcp", then call remote_sum with 17 and 25, and finally explain which tools you used.
 ```
 
 ### VS Code Launch
@@ -126,8 +167,9 @@ Please call the MCP tool echo_text with "hello from mcp", then call sum_numbers 
 The workspace includes a ready-to-run launch configuration for MCP testing in [.vscode/launch.json](c:/Users/Zouyu/repos/py-ollama-agent-kit/.vscode/launch.json):
 
 - `Python: Ollama Agent Chat with Test MCP`
+- `Python: Ollama Agent Chat with Remote MCP`
 
-That launch configuration starts chat with `builtin+mcp`, disables RAG for a cleaner MCP demo, and injects `OLLAMA_MCP_SERVERS` through the debug environment.
+These launch configurations start chat with `builtin+mcp`, disable RAG for a cleaner MCP demo, and inject `OLLAMA_MCP_SERVERS` through the debug environment.
 
 ### Windows Note
 

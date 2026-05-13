@@ -38,6 +38,7 @@
 - [x] 教学型 CLI 的基础交互和 debug log
 - [x] 多轮工具调用与任务执行提示
 - [x] 自定义工具注册机制
+- [x] MCP tool 接入（stdio 与远程 HTTP）
 - [x] `.env` 中的 tool 相关配置
 - [x] 最小自定义工具示例
 - [x] 会话导出功能
@@ -48,6 +49,7 @@
 - [ ] RAG 索引管理增强
 - [ ] 更丰富的 RAG 数据源
 - [ ] 更丰富的工具能力
+- [ ] 远程 MCP transport 对 SSE 或 Streamable HTTP 响应的兼容
 - [ ] 更完整的错误恢复与重试
 - [ ] 更完整的可观测性
 - [ ] 更强的 RAG 检索质量
@@ -315,7 +317,7 @@ Markdown 很适合教学起步，但用户很快会问：
 
 #### 当前状态
 
-项目已经新增了自定义工具注册机制和最小示例，但整体工具生态仍然偏轻量。
+项目已经新增了自定义工具注册机制、MCP tool 接入（stdio 与远程 HTTP）和最小示例，但整体工具生态仍然偏轻量。
 
 #### 为什么重要
 
@@ -330,6 +332,7 @@ Markdown 很适合教学起步，但用户很快会问：
 - 写文件工具
 - 受控 shell 工具
 - HTTP / Web API 工具
+- 远程 MCP transport 对 SSE 或 Streamable HTTP 响应的兼容
 - 更丰富的数学或数据分析工具
 
 #### 建议优先级
@@ -342,10 +345,13 @@ Markdown 很适合教学起步，但用户很快会问：
 
 这一项已经实现了最小版本：可以通过 `.env` 或 CLI 指定工具模块，并在 builtin / builtin+custom / custom-only 三种模式之间切换。
 
+同时，工具注册面已经支持 MCP source，可以在 builtin / custom / mcp 之间组合，并接入本地 stdio MCP server 与远程 HTTP MCP endpoint。
+
 #### 还可以继续增强的方向
 
 - 支持更丰富的模块发现方式
 - 支持按工具分组或按场景启用
+- 支持远程 MCP 的 SSE / Streamable HTTP 响应兼容
 - 支持工具元数据展示与帮助文档生成
 
 #### 建议优先级

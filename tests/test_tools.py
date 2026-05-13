@@ -1,7 +1,10 @@
 from pathlib import Path
 import json
+import socket
+import subprocess
 import sys
 import textwrap
+import time
 
 import pytest
 
@@ -306,7 +309,7 @@ def test_build_tool_registry_can_combine_builtin_custom_and_mcp(tmp_path: Path, 
         def call_tool(self, name: str, arguments: dict[str, object]) -> dict[str, object]:
             return {"content": [{"type": "text", "text": "ok"}]}
 
-    monkeypatch.setattr("ollama_agent_kit.tools.StdioMcpClient", FakeMcpClient)
+    monkeypatch.setattr("ollama_agent_kit.tools.build_mcp_client", lambda config, timeout_seconds: FakeMcpClient(config, timeout_seconds))
 
     settings = Settings(
         tool_modules="custom_tools",
@@ -337,7 +340,7 @@ def test_mcp_only_mode_excludes_builtin_tools(monkeypatch: pytest.MonkeyPatch) -
         def call_tool(self, name: str, arguments: dict[str, object]) -> dict[str, object]:
             return {"content": [{"type": "text", "text": "ok"}]}
 
-    monkeypatch.setattr("ollama_agent_kit.tools.StdioMcpClient", FakeMcpClient)
+    monkeypatch.setattr("ollama_agent_kit.tools.build_mcp_client", lambda config, timeout_seconds: FakeMcpClient(config, timeout_seconds))
 
     settings = Settings(
         tool_mode="mcp-only",
@@ -369,3 +372,56 @@ def test_real_stdio_mcp_server_can_be_loaded_and_called() -> None:
     assert registry.has_tool("test__sum_numbers")
     assert registry.execute("test__echo_text", {"text": "hello mcp"}) == "Echo: hello mcp"
     assert registry.execute("test__sum_numbers", {"a": 2, "b": 5}) == "7.0"
+
+
+def test_remote_http_mcp_server_can_be_loaded_and_called() -> None:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        _, port = sock.getsockname()
+
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "ollama_agent_kit.remote_mcp_test_server",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--token",
+            "test-token",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        time.sleep(0.4)
+        settings = Settings(
+            tool_mode="mcp-only",
+            mcp_servers=json.dumps(
+                {
+                    "remote": {
+                        "transport": "http",
+                        "url": f"http://127.0.0.1:{port}/mcp",
+                        "headers": {"Authorization": "Bearer test-token"},
+                    }
+                }
+            ),
+            mcp_timeout_seconds=3,
+        )
+
+        registry = build_tool_registry(Path.cwd(), settings=settings)
+
+        assert registry.has_tool("remote__remote_echo")
+        assert registry.has_tool("remote__remote_sum")
+        assert registry.execute("remote__remote_echo", {"text": "hello"}) == "Remote echo: hello"
+        assert registry.execute("remote__remote_sum", {"a": 2, "b": 5}) == "7.0"
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=2)
